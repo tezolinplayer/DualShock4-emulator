@@ -206,7 +206,7 @@ void LoadKMProfile(std::string ProfileFile) {
 void DefaultMainText() {
 	if (EmulationMode == XboxMode) {
 		printf("\n Emulating a DualShock 4 using an Xbox controller.\n");
-		if (SwapTriggersShoulders)
+		if (SwapTriggersShoulders == false)
 			printf(" Press \"ALT + 1\" to swap bumpers and triggers.\n");
 		else
 			printf(" Triggers are bumpers, bumpers are triggers. Press \"ALT + 1\" to swap them.\n");
@@ -252,17 +252,17 @@ void DefaultMainText() {
 		printf_s(" Enable or disable cursor movement on the \"ALT + %s\" button (right stick emulation).\n", KEY_ID_STOP_CENTERING_NAME.c_str());
 		printf_s(" Keyboard and mouse profile: \"%s\". Change profiles with \"ALT + Up/Down\".\n\n", KMProfiles[ProfileIndex].substr(0, KMProfiles[ProfileIndex].size() - 4).c_str());
 
-		if (LeftAnalogStick)
+		if (LeftAnalogStick == false)
 			printf(" The left stick is digital. Press \"ALT + 1\" to emulate analog mode.\n");
 		else
 			printf(" The left stick is analog. Press \"ALT + 1\" to make it digital.\n");
 
-		if (EmulateAnalogTriggers)
+		if (EmulateAnalogTriggers == false)
 			printf(" Triggers are digital. Press \"ALT + 2\" to simulate analog mode.\n");
 		else
 			printf(" Triggers are analog. Press \"ALT + 2\" to make digital mode.\n");
 
-		if (SwapSticks)
+		if (SwapSticks == false)
 			printf(" The left stick is controlled by the keyboard, the right by the mouse. ");
 		else
 			printf(" The left stick is controlled by the mouse, the right by the keyboard. ");
@@ -283,7 +283,7 @@ void DefaultMainText() {
 void RussianMainText() {
 	if (EmulationMode == XboxMode) {
 		printf("\n Эмуляция DualShock 4 с помощью контроллера Xbox.\n");
-		if (SwapTriggersShoulders)
+		if (SwapTriggersShoulders == false)
 			printf(" Нажмите \"ALT + 1\", чтобы поменять местами бамперы и триггеры.\n");
 		else
 			printf(" Триггеры — это бамперы, бамперы — это триггеры. Нажмите \"ALT + 1\", чтобы поменять их местами.\n");
@@ -329,17 +329,17 @@ void RussianMainText() {
 		printf_s(" Включение или отключение движения курсора на кнопках \"ALT + %s\" (эмуляция правого стика).\n", KEY_ID_STOP_CENTERING_NAME.c_str());
 		printf_s(" Профиль клавиатуры и мыши: \"%s\". Сменить профиль на \"ALT + Up/Down\".\n\n", KMProfiles[ProfileIndex].substr(0, KMProfiles[ProfileIndex].size() - 4).c_str());
 
-		if (LeftAnalogStick)
+		if (LeftAnalogStick == false)
 			printf(" Левый стик цифровой. Нажмите \"ALT + 1\", чтобы эмулировать аналоговый режим.\n");
 		else
 			printf(" Левый стик аналоговый. Нажмите \"ALT + 1\", чтобы сделать его цифровым.\n");
 
-		if (EmulateAnalogTriggers)
+		if (EmulateAnalogTriggers == false)
 			printf(" Триггеры цифровые. Нажмите \"ALT + 2\", чтобы включить аналоговый режим.\n");
 		else
 			printf(" Триггеры аналоговые. Нажмите \"ALT + 2\", чтобы сделать цифровой режим.\n");
 
-		if (SwapSticks)
+		if (SwapSticks == false)
 			printf(" Левый стик управляется клавиатурой, правый — мышью.");
 		else
 			printf(" Левый стик управляется мышью, правый — клавиатурой.");
