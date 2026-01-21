@@ -20,7 +20,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente (Essencial para não dar erro de compilação)
+    # 1. Cria os Headers (.h) manualmente (Isso garante que o código compile sem erro de types)
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -86,8 +86,8 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Baixa a LIB procurando automaticamente a ÚLTIMA versão (Latest Release)
-    - name: Download ViGEm Lib (Latest Auto)
+    # 2. Baixa a LIB procurando em MÚLTIPLAS versões (Loop Inteligente)
+    - name: Download ViGEm Lib (Smart Loop)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: powershell
@@ -95,44 +95,52 @@ jobs:
         $destDir = "Source\ViGEm\lib\x64"
         New-Item -ItemType Directory -Force -Path $destDir
         
-        # Usa a API para buscar a release marcada como "latest"
-        $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases/latest"
+        $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases"
         $headers = @{ Authorization = "token $env:GITHUB_TOKEN" }
         
-        Write-Host "Buscando última versão..."
+        Write-Host "Buscando lista de releases..."
         try {
-            $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
-            Write-Host "Versão encontrada: $($release.tag_name)"
+            $releases = Invoke-RestMethod -Uri $apiUrl -Headers $headers
             
-            # Procura qualquer asset que pareça com o SDK x64 (filtra por x64 e .zip)
-            $asset = $release.assets | Where-Object { $_.name -like "*x64*.zip" } | Select-Object -First 1
+            $found = $false
             
-            if (!$asset) { 
-                # Fallback: Se não achar na latest, tenta listar todas e pegar a primeira
-                Write-Host "Asset não encontrado na latest. Tentando primeira release da lista..."
-                $apiUrlList = "https://api.github.com/repos/nefarius/ViGEmClient/releases"
-                $releases = Invoke-RestMethod -Uri $apiUrlList -Headers $headers
-                $asset = $releases[0].assets | Where-Object { $_.name -like "*x64*.zip" } | Select-Object -First 1
+            # Loop pelas primeiras 15 releases
+            foreach ($rel in $releases | Select-Object -First 15) {
+                Write-Host "Verificando versão: $($rel.tag_name)"
+                
+                # Procura um asset ZIP que contenha 'x64' e 'VS2019'
+                $asset = $rel.assets | Where-Object { $_.name -like "*x64*VS2019*.zip" } | Select-Object -First 1
+                
+                if ($asset) {
+                    Write-Host ">>> Asset ENCONTRADO: $($asset.name)"
+                    Write-Host "Baixando de: $($asset.browser_download_url)"
+                    
+                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "vigem_sdk.zip"
+                    
+                    # Tenta extrair
+                    if (Test-Path "vigem_temp") { Remove-Item "vigem_temp" -Recurse -Force }
+                    Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp" -Force
+                    
+                    # Procura o arquivo .lib
+                    $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
+                    
+                    if ($libFile) {
+                        Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
+                        Write-Host "SUCESSO: Lib instalada em $destDir\ViGEmClient.lib"
+                        $found = $true
+                        break # Sai do loop
+                    } else {
+                        Write-Warning "ZIP baixado não continha o arquivo .lib. Tentando próxima versão..."
+                    }
+                }
             }
             
-            if (!$asset) { throw "Nenhum arquivo ZIP x64 encontrado nas releases." }
-            
-            Write-Host "Baixando asset: $($asset.name)"
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "vigem_sdk.zip"
-            
-            Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp" -Force
-            
-            # Procura o arquivo .lib recursivamente
-            $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
-            
-            if ($libFile) {
-                Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
-                Write-Host "SUCESSO: Lib instalada em $destDir\ViGEmClient.lib"
-            } else {
-                throw "O arquivo ViGEmClient.lib não estava dentro do ZIP baixado."
+            if (-not $found) {
+                throw "Nenhuma release válida com ViGEmClient.lib foi encontrada após verificar 15 versões."
             }
+            
         } catch {
-            Write-Error "Erro fatal no download: $_"
+            Write-Error "Erro fatal no processo de download: $_"
             exit 1
         }
 
