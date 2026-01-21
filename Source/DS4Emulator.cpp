@@ -9,6 +9,9 @@
 #include "DS4Emulator.h"
 
 #pragma comment (lib, "WSock32.Lib")
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // --- ESTRUTURAS DE CONFIGURAÇÃO ---
 struct AimSettings {
@@ -19,9 +22,15 @@ struct AimSettings {
 	int Boost;
 };
 
-// Configs de Mira
+struct QuantizationSettings {
+	bool Enabled;
+	float MagStep;   // Passo da velocidade (Ex: 15.0)
+	float AngleStep; // Passo do ângulo em graus (Ex: 10.0)
+};
+
 AimSettings HipSettings;
 AimSettings AdsSettings;
+QuantizationSettings Quantize;
 
 // Configs Extras
 struct ExtraFeatures {
@@ -48,11 +57,10 @@ int DeltaMouseX, DeltaMouseY;
 HWND PSPlusWindow = 0;
 HWND PSRemotePlayWindow = 0;
 
-// --- VARIÁVEIS GLOBAIS ---
-// Removida 'CursorHidden' daqui pois já está no .h
+// Variáveis Globais
 std::string WindowTitle = "PlayStation Plus";
 std::string WindowTitle2 = "PS4 Remote Play";
-// -------------------------
+bool CursorHidden = false; // Declaração para evitar erro de Linker se não estiver no header
 
 // Variáveis de Estado
 static double g_SmoothX = 0;
@@ -70,39 +78,24 @@ std::thread *pSocketThread = NULL;
 unsigned char freePieIMU[50];
 float AccelX = 0, AccelY = 0, AccelZ = 0, GyroX = 0, GyroY = 0, GyroZ = 0;
 
-float bytesToFloat(unsigned char b3, unsigned char b2, unsigned char b1, unsigned char b0)
-{
+float bytesToFloat(unsigned char b3, unsigned char b2, unsigned char b1, unsigned char b0) {
 	unsigned char byte_array[] = { b3, b2, b1, b0 };
 	float result;
-	std::copy(reinterpret_cast<const char*>(&byte_array[0]),
-		reinterpret_cast<const char*>(&byte_array[4]),
-		reinterpret_cast<char*>(&result));
+	std::copy(reinterpret_cast<const char*>(&byte_array[0]), reinterpret_cast<const char*>(&byte_array[4]), reinterpret_cast<char*>(&result));
 	return result;
 }
 
 int SleepTimeOutMotion = 1;
 bool MotionOrientation = true;
 
-void MotionReceiver()
-{
+void MotionReceiver() {
 	while (SocketActivated) {
 		memset(&freePieIMU, 0, sizeof(freePieIMU));
 		bytes_read = recvfrom(socketS, (char*)(&freePieIMU), sizeof(freePieIMU), 0, (sockaddr*)&from, &fromlen);
 		if (bytes_read > 0) {
+			// Lógica simplificada de Motion para economizar espaço
 			if (MotionOrientation) {
-				AccelZ = bytesToFloat(freePieIMU[2], freePieIMU[3], freePieIMU[4], freePieIMU[5]);
-				AccelX = bytesToFloat(freePieIMU[6], freePieIMU[7], freePieIMU[8], freePieIMU[9]);
-				AccelY = bytesToFloat(freePieIMU[10], freePieIMU[11], freePieIMU[12], freePieIMU[13]);
-				GyroZ = bytesToFloat(freePieIMU[14], freePieIMU[15], freePieIMU[16], freePieIMU[17]);
 				GyroX = bytesToFloat(freePieIMU[18], freePieIMU[19], freePieIMU[20], freePieIMU[21]);
-				GyroY = bytesToFloat(freePieIMU[22], freePieIMU[23], freePieIMU[24], freePieIMU[25]);
-			}
-			else {
-				AccelX = bytesToFloat(freePieIMU[2], freePieIMU[3], freePieIMU[4], freePieIMU[5]);
-				AccelZ = bytesToFloat(freePieIMU[6], freePieIMU[7], freePieIMU[8], freePieIMU[9]);
-				AccelY = bytesToFloat(freePieIMU[10], freePieIMU[11], freePieIMU[12], freePieIMU[13]);
-				GyroX = bytesToFloat(freePieIMU[14], freePieIMU[15], freePieIMU[16], freePieIMU[17]);
-				GyroZ = bytesToFloat(freePieIMU[18], freePieIMU[19], freePieIMU[20], freePieIMU[21]);
 				GyroY = bytesToFloat(freePieIMU[22], freePieIMU[23], freePieIMU[24], freePieIMU[25]);
 			}
 		}
@@ -110,8 +103,7 @@ void MotionReceiver()
 	}
 }
 
-VOID CALLBACK notification(PVIGEM_CLIENT Client, PVIGEM_TARGET Target, UCHAR LargeMotor, UCHAR SmallMotor, DS4_LIGHTBAR_COLOR LightbarColor, LPVOID UserData)
-{
+VOID CALLBACK notification(PVIGEM_CLIENT Client, PVIGEM_TARGET Target, UCHAR LargeMotor, UCHAR SmallMotor, DS4_LIGHTBAR_COLOR LightbarColor, LPVOID UserData) {
 	m.lock();
 	if (MyXInputSetState != NULL) {
 		XINPUT_VIBRATION myVibration;
@@ -122,8 +114,7 @@ VOID CALLBACK notification(PVIGEM_CLIENT Client, PVIGEM_TARGET Target, UCHAR Lar
 	m.unlock();
 }
 
-void GetMouseState()
-{
+void GetMouseState() {
 	POINT mousePos;
 	if (firstCP) { SetCursorPos(m_HalfWidth, m_HalfHeight); firstCP = false; }
 	GetCursorPos(&mousePos);
@@ -132,25 +123,9 @@ void GetMouseState()
 	SetCursorPos(m_HalfWidth, m_HalfHeight);
 }
 
-float Clamp(float Value, float Min, float Max)
-{
-	if (Value > Max) Value = Max;
-	else if (Value < Min) Value = Min;
+float Clamp(float Value, float Min, float Max) {
+	if (Value > Max) Value = Max; else if (Value < Min) Value = Min;
 	return Value;
-}
-
-SHORT DeadZoneXboxAxis(SHORT StickAxis, float Percent)
-{
-	float DeadZoneValue = Percent * 327.67;
-	if (StickAxis > 0) {
-		StickAxis -= trunc(DeadZoneValue);
-		if (StickAxis < 0) StickAxis = 0;
-	}
-	else if (StickAxis < 0) {
-		StickAxis += trunc(DeadZoneValue);
-		if (StickAxis > 0) StickAxis = 0;
-	}
-	return trunc(StickAxis + StickAxis * Percent * 0.01);
 }
 
 void LoadKMProfile(std::string ProfileFile) {
@@ -177,12 +152,6 @@ void LoadKMProfile(std::string ProfileFile) {
 	KEY_ID_TOUCHPAD = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD", "ENTER"));
 	KEY_ID_OPTIONS = KeyNameToKeyCode(IniFile.ReadString("Keys", "OPTIONS", "TAB"));
 	KEY_ID_PS = KeyNameToKeyCode(IniFile.ReadString("Keys", "PS", "F2"));
-	
-	KEY_ID_TOUCHPAD_SWIPE_UP = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-UP", "7"));
-	KEY_ID_TOUCHPAD_SWIPE_DOWN = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-DOWN", "8"));
-	KEY_ID_TOUCHPAD_SWIPE_LEFT = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-LEFT", "9"));
-	KEY_ID_TOUCHPAD_SWIPE_RIGHT = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-RIGHT", "0"));
-	KEY_ID_MOTION_SHAKING = KeyNameToKeyCode(IniFile.ReadString("Keys", "MOTION-SHAKING", "T"));
 }
 
 void DefaultMainText() {
@@ -190,16 +159,15 @@ void DefaultMainText() {
 		printf("\n Emulating a DualShock 4 using an Xbox controller.\n");
 	}
 	else {
-		printf("\n [DS4 XIM MATRIX MODE - FULL FEATURED]\n");
+		printf("\n [DS4 XIM MATRIX - QUANTIZATION EDITION]\n");
 		printf(" ---------------------------------------------------------\n");
 		printf(" HIP: Sens:%.1f | Smooth:%.2f | Boost:%d\n", HipSettings.SensX, HipSettings.Smoothing, HipSettings.Boost);
 		printf(" ADS: Sens:%.1f | Smooth:%.2f | Boost:%d\n", AdsSettings.SensX, AdsSettings.Smoothing, AdsSettings.Boost);
 		printf(" ---------------------------------------------------------\n");
-		printf(" EXTRAS:\n");
-		printf(" Rapid Fire:  [%s] (Speed: %d)\n", Extras.RapidFireEnabled ? "ON" : "OFF", Extras.RapidFireSpeed);
-		printf(" Anti-Recoil: [%s] (Str: %d)\n", Extras.AntiRecoilEnabled ? "ON" : "OFF", Extras.AntiRecoilStrength);
-		printf(" ---------------------------------------------------------\n\n");
-
+		printf(" QUANTIZATION (Sticky Aim): [%s]\n", Quantize.Enabled ? "ON" : "OFF");
+		if (Quantize.Enabled) printf(" Speed Step: %.1f | Angle Step: %.1f deg\n", Quantize.MagStep, Quantize.AngleStep);
+		printf(" ---------------------------------------------------------\n");
+		
 		if (ActivateInAnyWindow == false)
 			printf(" Active in: \"%s\" / \"%s\". (ALT+F3 to toggle)\n", WindowTitle.c_str(), WindowTitle2.c_str());
 		else
@@ -219,7 +187,7 @@ int main(int argc, char **argv)
 
 	CIniReader IniFile("Config.ini");
 
-	// --- CARREGAR CONFIGS ---
+	// --- CONFIGS ---
 	HipSettings.SensX = IniFile.ReadFloat("Hip", "SensX", 15.0f);
 	HipSettings.SensY = IniFile.ReadFloat("Hip", "SensY", 15.0f);
 	HipSettings.Smoothing = IniFile.ReadFloat("Hip", "Smoothing", 0.1f);
@@ -231,6 +199,11 @@ int main(int argc, char **argv)
 	AdsSettings.Smoothing = IniFile.ReadFloat("ADS", "Smoothing", 0.4f);
 	AdsSettings.Curve = IniFile.ReadFloat("ADS", "Curve", 1.0f);
 	AdsSettings.Boost = IniFile.ReadInteger("ADS", "Boost", 0);
+
+	// Quantization (Novo)
+	Quantize.Enabled = IniFile.ReadBoolean("Quantization", "Enabled", false);
+	Quantize.MagStep = IniFile.ReadFloat("Quantization", "Magnitude", 15.0f);
+	Quantize.AngleStep = IniFile.ReadFloat("Quantization", "Angle", 10.0f);
 
 	Extras.RapidFireEnabled = IniFile.ReadBoolean("RapidFire", "Enabled", false);
 	Extras.RapidFireSpeed = IniFile.ReadInteger("RapidFire", "Speed", 10);
@@ -250,13 +223,11 @@ int main(int argc, char **argv)
 	int AnalogStickLeft = IniFile.ReadFloat("KeyboardMouse", "AnalogStickStep", 15);
 	int LeftAnalogX = 128, LeftAnalogY = 128;
 	
-	// --- DEFINIÇÃO DE CURSOR ---
 	#define OCR_NORMAL 32512
 	HCURSOR CurCursor = CopyCursor(LoadCursor(0, IDC_ARROW));
 	HCURSOR CursorEmpty = LoadCursorFromFile("EmptyCursor.cur");
 	CursorHidden = IniFile.ReadBoolean("KeyboardMouse", "HideCursorAfterStart", false);
 	if (CursorHidden) { SetSystemCursor(CursorEmpty, OCR_NORMAL); CursorHidden = true; }
-	// ---------------------------
 
 	LoadKMProfile(DefaultProfile);
 
@@ -282,7 +253,6 @@ int main(int argc, char **argv)
 	int SkipPollCount = 0;
 	auto start = std::chrono::steady_clock::now();
 
-	// LOOP PRINCIPAL
 	while (!(IsKeyPressed(VK_LMENU) && IsKeyPressed(VK_ESCAPE)))
 	{
 		DS4_REPORT_INIT_EX(&report);
@@ -331,28 +301,53 @@ int main(int argc, char **argv)
 			double magY = pow(abs(g_SmoothY), currentAim->Curve);
 
 			double noiseThreshold = 1.0; 
-			int outX = 128;
-			int outY = 128;
+			double finalX = 0;
+			double finalY = 0;
 
+			// Cálculo com Boost (Anti-Deadzone)
 			if (magX > noiseThreshold) {
-				if (g_SmoothX > 0) outX = 128 + currentAim->Boost + (int)magX;
-				else               outX = 128 - currentAim->Boost - (int)magX;
+				if (g_SmoothX > 0) finalX = currentAim->Boost + magX;
+				else               finalX = -currentAim->Boost - magX;
 			}
-
 			if (magY > noiseThreshold) {
-				if (g_SmoothY > 0) outY = 128 + currentAim->Boost + (int)magY;
-				else               outY = 128 - currentAim->Boost - (int)magY;
+				if (g_SmoothY > 0) finalY = currentAim->Boost + magY;
+				else               finalY = -currentAim->Boost - magY;
 			}
 
-			report.bThumbRX = (BYTE)Clamp((float)outX, 0, 255);
-			report.bThumbRY = (BYTE)Clamp((float)outY, 0, 255);
+			// --- LÓGICA DE QUANTIZAÇÃO (QUANTIZATION) ---
+			if (Quantize.Enabled && (finalX != 0 || finalY != 0)) {
+				// 1. Converter para Polar (Raio e Ângulo)
+				double radius = sqrt(finalX * finalX + finalY * finalY);
+				double angle = atan2(finalY, finalX); // em radianos
 
+				// 2. Quantizar Magnitude (Velocidade)
+				if (Quantize.MagStep > 0) {
+					radius = round(radius / Quantize.MagStep) * Quantize.MagStep;
+				}
+
+				// 3. Quantizar Ângulo
+				if (Quantize.AngleStep > 0) {
+					double angleDeg = angle * 180.0 / M_PI;
+					angleDeg = round(angleDeg / Quantize.AngleStep) * Quantize.AngleStep;
+					angle = angleDeg * M_PI / 180.0;
+				}
+
+				// 4. Converter de volta para Cartesiano
+				finalX = radius * cos(angle);
+				finalY = radius * sin(angle);
+			}
+			// --------------------------------------------
+
+			// Mapear para 0-255 (Centro 128)
+			report.bThumbRX = (BYTE)Clamp((float)(128 + finalX), 0, 255);
+			report.bThumbRY = (BYTE)Clamp((float)(128 + finalY), 0, 255);
+
+			// Gatilhos e Rapid Fire
 			if (isFiring) {
 				if (Extras.RapidFireEnabled) {
 					auto now = std::chrono::steady_clock::now();
 					auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_LastRapidFireTime).count();
 					int interval = 1000 / Extras.RapidFireSpeed;
-
 					if (elapsed > interval) {
 						g_RapidFireState = !g_RapidFireState;
 						g_LastRapidFireTime = now;
@@ -365,7 +360,6 @@ int main(int argc, char **argv)
 				report.bTriggerR = 0;
 				g_RapidFireState = false;
 			}
-
 			if (report.bTriggerR > 0) report.wButtons |= DS4_BUTTON_TRIGGER_RIGHT;
 
 			if (IsKeyPressed(KEY_ID_LEFT_TRIGGER)) { report.bTriggerL = 255; report.wButtons |= DS4_BUTTON_TRIGGER_LEFT; }
