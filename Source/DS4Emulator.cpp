@@ -2,6 +2,7 @@
 #include <mutex>
 #include <cmath> // Necessário para pow() e abs()
 #include <algorithm> // Necessário para clamp
+#include <string>
 #include "ViGEm\Client.h"
 #include "IniReader\IniReader.h"
 #include "DS4Emulator.h"
@@ -37,10 +38,10 @@ int DeltaMouseX, DeltaMouseY;
 HWND PSPlusWindow = 0;
 HWND PSRemotePlayWindow = 0;
 
-// --- GLOBAL VARIABLES (FIXED SCOPE) ---
+// --- VARIÁVEIS GLOBAIS (CORREÇÃO DO ERRO DE COMPILAÇÃO) ---
 std::string WindowTitle = "PlayStation Plus";
 std::string WindowTitle2 = "PS4 Remote Play";
-// --------------------------------------
+// ----------------------------------------------------------
 
 // Variáveis para o algoritmo XIM (Smoothing Globais)
 static double g_SmoothX = 0;
@@ -227,11 +228,11 @@ void LoadKMProfile(std::string ProfileFile) {
 	KEY_ID_TOUCHPAD_SECOND_RIGHT = KeyNameToKeyCode(KEY_ID_TOUCHPAD_SECOND_RIGHT_NAME.c_str());
 }
 
-// --- ATUALIZADO: FUNÇÃO DE TEXTO PARA MOSTRAR CONFIGS XIM ---
+// --- FUNÇÃO CORRIGIDA: AGORA LÊ AS VARIÁVEIS GLOBAIS ---
 void DefaultMainText() {
 	if (EmulationMode == XboxMode) {
 		printf("\n Emulating a DualShock 4 using an Xbox controller.\n");
-		// ... (código xbox omitido para economizar espaço)
+		// ...
 	}
 	else {
 		printf("\n [DS4 XIM MATRIX MODE ACTIVATED]\n");
@@ -404,10 +405,10 @@ int main(int argc, char **argv)
 
 	int SleepTimeOutKB = IniFile.ReadInteger("KeyboardMouse", "SleepTimeOut", 1);
 	
-	// --- FIXED: GLOBAL VARIABLE ASSIGNMENT ---
+	// --- AQUI ESTAVA O ERRO ANTES. AGORA ATRIBUÍMOS AS GLOBAIS DIRETAMENTE ---
 	WindowTitle = IniFile.ReadString("KeyboardMouse", "ActivateOnlyInWindow", "PlayStation Plus");
 	WindowTitle2 = IniFile.ReadString("KeyboardMouse", "ActivateOnlyInWindow2", "PS4 Remote Play");
-	// -----------------------------------------
+	// --------------------------------------------------------------------------
 
 	int FullScreenTopOffset = IniFile.ReadInteger("KeyboardMouse", "FullScreenTopOffset", -50);
 	bool HideTaskBar = IniFile.ReadBoolean("KeyboardMouse", "HideTaskBarInFullScreen", true);
@@ -835,7 +836,7 @@ int main(int argc, char **argv)
 				if (IsKeyPressed(VK_MENU) && IsKeyPressed(KEY_ID_STOP_CENTERING) && SkipPollCount == 0) { CenteringEnable = !CenteringEnable;  SkipPollCount = SkipPollTimeOut; }
 				if (CenteringEnable) GetMouseState();
 
-				// ----------- INÍCIO DA LÓGICA XIM MATRIX (CORRIGIDA) -----------
+				// ----------- INÍCIO DA LÓGICA XIM MATRIX (CORRIGIDA COM NOISE GATE) -----------
 
 				// 1. Detectar se é HIP ou ADS (Botão Direito)
 				AimSettings* currentAim = (IsKeyPressed(VK_RBUTTON)) ? &AdsSettings : &HipSettings;
@@ -860,17 +861,19 @@ int main(int argc, char **argv)
 				double magX = pow(abs(g_SmoothX), currentAim->Curve);
 				double magY = pow(abs(g_SmoothY), currentAim->Curve);
 
-				// 6. Aplicar Boost (Anti-Deadzone do perfil atual)
-				// Preservar sinal e aplicar Boost a partir do centro (128)
+				// 6. Aplicar Boost com NOISE GATE (FILTRO DE RUÍDO)
+				// Isso impede que o personagem ande sozinho por vibração do mouse.
+				double noiseThreshold = 1.0; 
+
 				int outX = 128;
 				int outY = 128;
 
-				if (magX > 0.1) {
+				if (magX > noiseThreshold) {
 					if (g_SmoothX > 0) outX = 128 + currentAim->Boost + (int)magX;
 					else               outX = 128 - currentAim->Boost - (int)magX;
 				}
 
-				if (magY > 0.1) {
+				if (magY > noiseThreshold) {
 					if (g_SmoothY > 0) outY = 128 + currentAim->Boost + (int)magY;
 					else               outY = 128 - currentAim->Boost - (int)magY;
 				}
