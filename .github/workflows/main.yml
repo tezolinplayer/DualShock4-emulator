@@ -1,0 +1,39 @@
+name: Build DS4Emulator (Windows)
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch: # Permite rodar manualmente clicando num botão
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    # 1. Baixa o código do repositório
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive # Garante que baixe submódulos se houver
+
+    # 2. Configura o MSBuild (compilador do Visual Studio)
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    # 3. Compila o projeto em modo Release (x64)
+    # Ajuste 'Source/DS4Emulator.vcxproj' se o caminho for diferente
+    - name: Build Solution
+      run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+
+    # 4. Lista os arquivos gerados (para depuração, caso precise ver onde o .exe foi parar)
+    - name: List Build Directory
+      run: dir Source\x64\Release
+
+    # 5. Faz o upload do .exe para você baixar
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DS4Emulator-XIM-Version
+        path: Source/x64/Release/*.exe
