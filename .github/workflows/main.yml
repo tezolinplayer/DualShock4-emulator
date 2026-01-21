@@ -18,7 +18,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente (Isso resolveu os erros de compilação C2039)
+    # 1. Cria os Headers (.h) manualmente (Isso garante compatibilidade)
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -84,29 +84,27 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Baixa a Biblioteca compilada (.lib) para resolver o erro LNK2001
-    - name: Download ViGEm Lib (x64)
+    # 2. CORREÇÃO: Baixa a LIB do NuGet (mais confiável que links do GitHub)
+    - name: Download ViGEm Lib (NuGet)
       shell: powershell
       run: |
-        # Cria a estrutura de pastas que o linker espera: Source\ViGEm\lib\x64
         New-Item -ItemType Directory -Force -Path Source\ViGEm\lib\x64
         
-        # Baixa o SDK oficial (zip)
-        $zipUrl = "https://github.com/nefarius/ViGEmClient/releases/download/v1.21.222/ViGEmClient_1.21.222.0_x64_VS2019.zip"
-        $zipOutput = "vigem_sdk.zip"
-        Invoke-WebRequest -Uri $zipUrl -OutFile $zipOutput
+        # Link direto do pacote NuGet oficial
+        $nuget = "https://www.nuget.org/api/v2/package/ViGEmClient/1.17.333"
+        Invoke-WebRequest -Uri $nuget -OutFile "vigem.zip"
         
         # Extrai
-        Expand-Archive -Path $zipOutput -DestinationPath vigem_temp
+        Expand-Archive -Path "vigem.zip" -DestinationPath "vigem_pkg"
         
-        # Copia o arquivo .lib para o local correto
-        Copy-Item -Path "vigem_temp\lib\ViGEmClient.lib" -Destination "Source\ViGEm\lib\x64\ViGEmClient.lib"
+        # Procura o arquivo .lib da versão x64 dentro do pacote extraído
+        $libFile = Get-ChildItem -Path "vigem_pkg" -Recurse -Filter "ViGEmClient.lib" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
         
-        # Verifica se o arquivo está lá
-        if (Test-Path "Source\ViGEm\lib\x64\ViGEmClient.lib") {
-            Write-Host "LIB instalada com sucesso!"
+        if ($libFile) {
+            Copy-Item -Path $libFile.FullName -Destination "Source\ViGEm\lib\x64\ViGEmClient.lib"
+            Write-Host "LIB encontrada e instalada: $($libFile.FullName)"
         } else {
-            Write-Error "FALHA ao instalar a LIB."
+            Write-Error "Não foi possível encontrar ViGEmClient.lib no pacote baixado."
         }
 
     - name: Build Solution
