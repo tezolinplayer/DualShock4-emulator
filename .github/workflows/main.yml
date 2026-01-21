@@ -85,33 +85,42 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Compila a LIB do zero
+    # 2. Compila a LIB do ViGEm (Com Output Path Forçado)
     - name: Build ViGEmClient Lib
       shell: powershell
       run: |
         git clone https://github.com/nefarius/ViGEmClient.git vigem_src
+        
+        # Restaura NuGet
         nuget restore vigem_src/ViGEmClient.sln
         
-        # Compila especificamente o projeto da lib estática
-        msbuild vigem_src/src/ViGEmClient.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+        # Define um diretório absoluto para a saída da compilação (evita "onde está o arquivo?")
+        $outDir = "$(Get-Location)\vigem_out\"
+        New-Item -ItemType Directory -Force -Path $outDir
         
-        # Encontra o arquivo gerado
-        $libFile = Get-ChildItem -Path "vigem_src" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
+        Write-Host "Compilando ViGEmClient para $outDir..."
         
-        if ($libFile) {
-            Write-Host "LIB Gerada em: $($libFile.FullName)"
+        # Compila a SOLUÇÃO (mais seguro que projeto isolado) com OutDir forçado
+        msbuild vigem_src/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:OutDir=$outDir
+        
+        # Verifica se o arquivo foi criado
+        $libPath = "$outDir\ViGEmClient.lib"
+        if (Test-Path $libPath) {
+            Write-Host "SUCESSO: Lib gerada em $libPath"
             
-            # Copia para um local conhecido e fácil
+            # Copia para onde o emulador precisa
             New-Item -ItemType Directory -Force -Path "Libs"
-            Copy-Item -Path $libFile.FullName -Destination "Libs\ViGEmClient.lib"
+            Copy-Item -Path $libPath -Destination "Libs\ViGEmClient.lib"
         } else {
-            Write-Error "FALHA FATAL: Não foi possível gerar ViGEmClient.lib."
+            # Debug: Lista o conteúdo da pasta de saída se falhar
+            Write-Warning "Arquivo .lib não encontrado em $outDir. Conteúdo da pasta:"
+            Get-ChildItem -Path $outDir -Recurse
+            Write-Error "FALHA CRÍTICA: O arquivo ViGEmClient.lib não foi gerado."
             exit 1
         }
 
-    # 3. Compila o emulador FORÇANDO o caminho da lib
+    # 3. Compila o emulador (Apontando para a pasta Libs)
     - name: Build Solution
-      # AQUI ESTÁ O TRUQUE: /p:AdditionalDependencies="..." força o linker a usar nossa lib
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:LibraryPath="$(MSBuildProjectDirectory)\..\Libs;$(LibraryPath)"
 
     - name: Upload Artifact
