@@ -1,5 +1,7 @@
-﻿#include <Windows.h>
+#include <Windows.h>
 #include <mutex>
+#include <cmath> // Necessário para pow() e abs()
+#include <algorithm> // Necessário para clamp
 #include "ViGEm\Client.h"
 #include "IniReader\IniReader.h"
 #include "DS4Emulator.h"
@@ -23,6 +25,11 @@ bool firstCP = true;
 int DeltaMouseX, DeltaMouseY;
 HWND PSPlusWindow = 0;
 HWND PSRemotePlayWindow = 0;
+
+// Variáveis para o algoritmo XIM (Smoothing)
+// Declaradas globalmente ou estáticas para manter o histórico entre frames
+static double g_SmoothX = 0;
+static double g_SmoothY = 0;
 
 // WinSock
 SOCKET socketS;
@@ -90,7 +97,7 @@ VOID CALLBACK notification(
 		MyXInputSetState(XboxUserIndex, &myVibration);
 	}
 
-    m.unlock();
+	m.unlock();
 }
 
 void GetMouseState()
@@ -120,7 +127,7 @@ SHORT DeadZoneXboxAxis(SHORT StickAxis, float Percent)
 		StickAxis -= trunc(DeadZoneValue);
 		if (StickAxis < 0)
 			StickAxis = 0;
-	} 
+	}
 	else if (StickAxis < 0) {
 		StickAxis += trunc(DeadZoneValue);
 		if (StickAxis > 0)
@@ -157,18 +164,18 @@ void LoadKMProfile(std::string ProfileFile) {
 	KEY_ID_PS = KeyNameToKeyCode(IniFile.ReadString("Keys", "PS", "F2"));
 
 	KEY_ID_MOTION_SHAKING_NAME = IniFile.ReadString("Keys", "MOTION-SHAKING", "T");
-	KEY_ID_MOTION_X_ADD_NAME = IniFile.ReadString("Keys", "MOTION-X-ADD", "NUMPAD6");  // X+
-	KEY_ID_MOTION_X_SUB_NAME = IniFile.ReadString("Keys", "MOTION-X-SUB", "NUMPAD4");  // X−
-	KEY_ID_MOTION_Y_ADD_NAME = IniFile.ReadString("Keys", "MOTION-Y-ADD", "NUMPAD8");  // Y+
-	KEY_ID_MOTION_Y_SUB_NAME = IniFile.ReadString("Keys", "MOTION-Y-SUB", "NUMPAD2");  // Y−
+	KEY_ID_MOTION_X_ADD_NAME = IniFile.ReadString("Keys", "MOTION-X-ADD", "NUMPAD6"); // X+
+	KEY_ID_MOTION_X_SUB_NAME = IniFile.ReadString("Keys", "MOTION-X-SUB", "NUMPAD4"); // X−
+	KEY_ID_MOTION_Y_ADD_NAME = IniFile.ReadString("Keys", "MOTION-Y-ADD", "NUMPAD8"); // Y+
+	KEY_ID_MOTION_Y_SUB_NAME = IniFile.ReadString("Keys", "MOTION-Y-SUB", "NUMPAD2"); // Y−
 	KEY_ID_MOTION_Z_ADD_NAME = IniFile.ReadString("Keys", "MOTION-Z-ADD", "NUMPAD9"); // Z+
 	KEY_ID_MOTION_Z_SUB_NAME = IniFile.ReadString("Keys", "MOTION-Z-SUB", "NUMPAD7"); // Z−
 
 	KEY_ID_MOTION_SHAKING = KeyNameToKeyCode(KEY_ID_MOTION_SHAKING_NAME.c_str());
-	KEY_ID_MOTION_X_ADD = KeyNameToKeyCode(KEY_ID_MOTION_X_ADD_NAME.c_str());  // X+
-	KEY_ID_MOTION_X_SUB = KeyNameToKeyCode(KEY_ID_MOTION_X_SUB_NAME.c_str());  // X−
-	KEY_ID_MOTION_Y_ADD = KeyNameToKeyCode(KEY_ID_MOTION_Y_ADD_NAME.c_str());  // Y+
-	KEY_ID_MOTION_Y_SUB = KeyNameToKeyCode(KEY_ID_MOTION_Y_SUB_NAME.c_str());  // Y−
+	KEY_ID_MOTION_X_ADD = KeyNameToKeyCode(KEY_ID_MOTION_X_ADD_NAME.c_str()); // X+
+	KEY_ID_MOTION_X_SUB = KeyNameToKeyCode(KEY_ID_MOTION_X_SUB_NAME.c_str()); // X−
+	KEY_ID_MOTION_Y_ADD = KeyNameToKeyCode(KEY_ID_MOTION_Y_ADD_NAME.c_str()); // Y+
+	KEY_ID_MOTION_Y_SUB = KeyNameToKeyCode(KEY_ID_MOTION_Y_SUB_NAME.c_str()); // Y−
 	KEY_ID_MOTION_Z_ADD = KeyNameToKeyCode(KEY_ID_MOTION_Z_ADD_NAME.c_str()); // Z+
 	KEY_ID_MOTION_Z_SUB = KeyNameToKeyCode(KEY_ID_MOTION_Z_SUB_NAME.c_str()); // Z−
 
@@ -364,19 +371,18 @@ void MainTextUpdate() {
 		RussianMainText();
 	else
 		DefaultMainText();
-	//system("cls"); DefaultMainText();
 }
 
 int main(int argc, char **argv)
 {
-	SetConsoleTitle("DS4Emulator 2.2");
+	SetConsoleTitle("DS4Emulator 2.2 - XIM Enhanced");
 	WindowToCenter();
 
 	if (PRIMARYLANGID(GetUserDefaultLangID()) == LANG_RUSSIAN) { // Resave cpp file with UTF8 BOM
 		Lang = LANG_RUSSIAN;
 		setlocale(LC_ALL, ""); // Output locale
 		setlocale(LC_NUMERIC, "C"); // Numbers with a dot
-		system("chcp 65001 > nul"); // Console UTF8 output 
+		system("chcp 65001 > nul"); // Console UTF8 output
 	}
 
 	CIniReader IniFile("Config.ini"); // Config
@@ -415,11 +421,9 @@ int main(int argc, char **argv)
 			SocketActivated = false;
 		}
 	}
-	int MotionSens = IniFile.ReadInteger("Motion", "Sens", 100); // sampling(timestamp) speed of motion sensor
-	// min & max programmable ds4 gyro +/-125 degrees/s = 2 rad/s to 2000 degrees/s = 35 rad/s
-	float GyroSens = 35 - IniFile.ReadInteger("Motion", "GyroSens", 100)/100 * 33; // 33 = max - min
-	// min & max programmable ds4 accel +/-2g = 20 m/s^2  to 16g = 160 m/s^2
-	float AccelSens = 160 - IniFile.ReadInteger("Motion", "AccelSens", 100)/100 * 140; // 140 = max - min
+	int MotionSens = IniFile.ReadInteger("Motion", "Sens", 100);
+	float GyroSens = 35 - IniFile.ReadInteger("Motion", "GyroSens", 100)/100 * 33;
+	float AccelSens = 160 - IniFile.ReadInteger("Motion", "AccelSens", 100)/100 * 140;
 	int InverseXStatus = IniFile.ReadBoolean("Motion", "InverseX", false) == false ? 1 : -1 ;
 	int InverseYStatus = IniFile.ReadBoolean("Motion", "InverseY", false) == false ? 1 : -1 ;
 	int InverseZStatus = IniFile.ReadBoolean("Motion", "InverseZ", false) == false ? 1 : -1 ;
@@ -447,7 +451,7 @@ int main(int argc, char **argv)
 	int KEY_ID_XBOX_ACTIVATE_MULTI = XboxKeyNameToXboxKeyCode(KEY_ID_XBOX_ACTIVATE_MULTI_NAME);
 	KEY_ID_XBOX_MOTION_SHAKING_NAME = IniFile.ReadString("Xbox", "MotionShakingKey", "RIGHT-SHOULDER");
 	int KEY_ID_XBOX_MOTION_SHAKING = XboxKeyNameToXboxKeyCode(KEY_ID_XBOX_MOTION_SHAKING_NAME);
-	
+
 	bool DisableButtonOnMotion = IniFile.ReadBoolean("Xbox", "DisableButtonOnMotion", false);
 	KEY_ID_XBOX_MOTION_X_ADD_NAME = IniFile.ReadString("Xbox", "MotionXAdd", "DPAD-UP");
 	KEY_ID_XBOX_MOTION_X_SUB_NAME = IniFile.ReadString("Xbox", "MotionXSub", "DPAD-DOWN");
@@ -486,11 +490,19 @@ int main(int argc, char **argv)
 	float StepTriggerValue = IniFile.ReadFloat("KeyboardMouse", "AnalogTriggerStep", 15);
 	mouseSensetiveX = IniFile.ReadFloat("KeyboardMouse", "SensX", 15);
 	mouseSensetiveY = IniFile.ReadFloat("KeyboardMouse", "SensY", 15);
+
+	// --- NOVAS CONFIGURAÇÕES XIM STYLE ---
+	// Adicione estas chaves no seu Config.ini na seção [KeyboardMouse]
+	float mouseSmoothing = IniFile.ReadFloat("KeyboardMouse", "MouseSmoothing", 0.4f); // 0.1 a 1.0 (Menor = mais suave)
+	float mouseExponent = IniFile.ReadFloat("KeyboardMouse", "MouseExponent", 1.25f); // Curva exponencial (1.2 a 1.5)
+	int mouseBoost = IniFile.ReadInteger("KeyboardMouse", "MouseBoost", 15);          // Boost de zona morta
+	// -------------------------------------
+
 	SwapSticks = IniFile.ReadBoolean("KeyboardMouse", "SwapSticks", false);
 	LeftAnalogStick = IniFile.ReadBoolean("KeyboardMouse", "EmulateLeftAnalogStick", false);
 	int LeftAnalogX = 128, LeftAnalogY = 128;
 	int AnalogStickLeft = IniFile.ReadFloat("KeyboardMouse", "AnalogStickStep", 15);
-	int DeadZoneDS4 = IniFile.ReadInteger("KeyboardMouse", "DeadZone", 0); // 25, makes mouse movement smoother when moving slowly (12->25)
+	int DeadZoneDS4 = IniFile.ReadInteger("KeyboardMouse", "DeadZone", 0);
 
 	static auto start = std::chrono::steady_clock::now();
 
@@ -512,7 +524,6 @@ int main(int argc, char **argv)
 		FindClose(hFind);
 	}
 
-	// Load default profile (Shaking key for Xbox)
 	LoadKMProfile(KMProfiles[ProfileIndex]);
 
 	const auto client = vigem_alloc();
@@ -525,17 +536,13 @@ int main(int argc, char **argv)
 	bool TouchpadSwipeLeft = false, TouchpadSwipeRight = false;
 	bool MotionShakingSwap = false;
 
-	//int MotionKeyOnlyCheckCount = 0;
-	//int MotionKeyReleasedCount = 0;
-	//bool MotionKeyOnlyPressed = false;
-
 	int SkipPollCount = 0;
 
 	// Load library and scan Xbox gamepads
-	hDll = LoadLibrary("xinput1_3.dll"); // x360ce support
+	hDll = LoadLibrary("xinput1_3.dll");
 	if (hDll == NULL) hDll = LoadLibrary("xinput1_4.dll");
 	if (hDll != NULL) {
-		MyXInputGetState = (_XInputGetState)GetProcAddress(hDll, (LPCSTR)100); // "XInputGetState"); // Ordinal 100 is the same as XInputGetState but supports the Guide button. Taken here https://github.com/speps/XInputDotNet/blob/master/XInputInterface/GamePad.cpp
+		MyXInputGetState = (_XInputGetState)GetProcAddress(hDll, (LPCSTR)100);
 		MyXInputSetState = (_XInputSetState)GetProcAddress(hDll, "XInputSetState");
 		if (MyXInputGetState == NULL || MyXInputSetState == NULL)
 			hDll = NULL;
@@ -555,7 +562,6 @@ int main(int argc, char **argv)
 		m_HalfHeight = GetSystemMetrics(SM_CYSCREEN) / 2;
 	}
 
-	// Write current mode
 	MainTextUpdate();
 
 	DS4_TOUCH BuffPreviousTouch[2] = { 0, 0 };
@@ -573,21 +579,19 @@ int main(int argc, char **argv)
 		DS4_REPORT_INIT_EX(&report);
 
 		ResetTouchData(Touch1);
-		ResetTouchData(Touch2); 
+		ResetTouchData(Touch2);
 
 		report.bTouchPacketsN = 0;
 		report.sCurrentTouch = { 0 };
 		report.sPreviousTouch[0] = { 0 };
 		report.sPreviousTouch[1] = { 0 };
 
-		// previous-пакет (держим один последний)
 		static decltype(report.sCurrentTouch) LastTouch = { 0 };
 		static bool LastTouchValid = false;
 
-		// по умолчанию оба "up" с текущими track-id
 		report.sCurrentTouch.bIsUpTrackingNum1 = uint8_t(0x80 | (Touch1.ID & 0x7F));
 		report.sCurrentTouch.bIsUpTrackingNum2 = uint8_t(0x80 | (Touch2.ID & 0x7F));
-		
+
 		report.bBatteryLvl = 11;
 
 		bool MotionShaking = false, MotionXAdd = false, MotionXSub = false, MotionYAdd = false, MotionYSub = false, MotionZAdd = false, MotionZSub = false;
@@ -597,7 +601,7 @@ int main(int argc, char **argv)
 			DWORD myStatus = ERROR_DEVICE_NOT_CONNECTED;
 			if (hDll != NULL)
 				myStatus = MyXInputGetState(XboxUserIndex, &myPState);
-			
+
 			if (myStatus == ERROR_SUCCESS) {
 
 				if (SkipPollCount == 0 && IsKeyPressed(VK_MENU)) {
@@ -622,7 +626,6 @@ int main(int argc, char **argv)
 						SkipPollCount = SkipPollTimeOut;
 					}
 
-					// Dead zones
 					if (IsKeyPressed(VK_F9))
 					{
 						DeadZoneMode = !DeadZoneMode;
@@ -630,7 +633,7 @@ int main(int argc, char **argv)
 							MainTextUpdate();
 						SkipPollCount = SkipPollTimeOut;
 					}
-				}	
+				}
 
 				if (DeadZoneMode) {
 					printf(" Left Stick X=%.2f, ", abs(myPState.Gamepad.sThumbLX / (32767 / 100.0f)));
@@ -644,23 +647,20 @@ int main(int argc, char **argv)
 				myPState.Gamepad.sThumbRX = DeadZoneXboxAxis(myPState.Gamepad.sThumbRX, DeadZoneRightStickX);
 				myPState.Gamepad.sThumbRY = DeadZoneXboxAxis(myPState.Gamepad.sThumbRY, DeadZoneRightStickY);
 
-				// Convert axis from - https://github.com/sam0x17/XJoy/blob/236b5539cc15ea1c83e1e5f0260937f69a78866d/Include/ViGEmUtil.h
 				report.bThumbLX = ((myPState.Gamepad.sThumbLX + ((USHRT_MAX / 2) + 1)) / 257);
 				report.bThumbLY = (-(myPState.Gamepad.sThumbLY + ((USHRT_MAX / 2) - 1)) / 257);
 				report.bThumbLY = (report.bThumbLY == 0) ? 0xFF : report.bThumbLY;
-				
-				// Inverting X
+
 				if (InvertX == false)
 					report.bThumbRX = ((myPState.Gamepad.sThumbRX + ((USHRT_MAX / 2) + 1)) / 257);
 				else
 					report.bThumbRX = ((-myPState.Gamepad.sThumbRX + ((USHRT_MAX / 2) + 1)) / 257);
-				
-				// Inverting Y
+
 				if (InvertY == false)
 					report.bThumbRY = (-(myPState.Gamepad.sThumbRY + ((USHRT_MAX / 2) + 1)) / 257);
 				else
 					report.bThumbRY = (-(-myPState.Gamepad.sThumbRY + ((USHRT_MAX / 2) + 1)) / 257);
-				
+
 				report.bThumbRY = (report.bThumbRY == 0) ? 0xFF : report.bThumbRY;
 
 				if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_BACK && myPState.Gamepad.wButtons & XINPUT_GAMEPAD_START) {
@@ -674,7 +674,6 @@ int main(int argc, char **argv)
 				if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_START)
 					report.wButtons |= DS4_BUTTON_OPTIONS;
 
-				// PS button
 				if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_BACK && myPState.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) {
 					myPState.Gamepad.wButtons &= ~XINPUT_GAMEPAD_BACK; myPState.Gamepad.wButtons &= ~XINPUT_GAMEPAD_LEFT_SHOULDER;
 					report.bSpecial |= DS4_SPECIAL_BUTTON_PS;
@@ -682,80 +681,43 @@ int main(int argc, char **argv)
 
 				if (EnableXboxButton && myPState.Gamepad.wButtons & XINPUT_GAMEPAD_GUIDE) report.bSpecial |= DS4_SPECIAL_BUTTON_PS;
 
-				// Motion shaking
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_SHAKING) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_SHAKING;
 					MotionShaking = true;
 				};
 
-				// Motion X+
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_X_ADD)) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_X_ADD;
 					MotionXAdd = true;
-					//printf("right\n");
 				}
 
-				// Motion X-
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_X_SUB)) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_X_SUB;
 					MotionXSub = true;
-					//printf("left\n");
 				}
 
-				// Motion Y+
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_Y_ADD)) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_Y_ADD;
 					MotionYAdd = true;
-					//printf("up\n");
 				}
 
-				// Motion Y-
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_Y_SUB)) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_Y_SUB;
 					MotionYSub = true;
-					//printf("down\n");
 				}
 
-				// Motion Z+
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_Z_ADD)) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_Z_ADD;
 					MotionZAdd = true;
-					//printf("right\n");
 				}
 
-				// Motion Z-
 				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons & KEY_ID_XBOX_MOTION_Z_SUB)) {
 					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI; if (DisableButtonOnMotion) myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_MOTION_Z_SUB;
 					MotionZSub = true;
-					//printf("left\n");
 				}
 
-				// Motion key exclude
 				bool XboxActivateMotionPressed = myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI ? true : false;
-				/*if (myPState.Gamepad.wButtons == KEY_ID_XBOX_ACTIVATE_MULTI && MotionKeyOnlyCheckCount == 0) { MotionKeyOnlyCheckCount = 20; MotionKeyOnlyPressed = true; }
-				if (MotionKeyOnlyCheckCount > 0) {
-					MotionKeyOnlyCheckCount--;
-					if (myPState.Gamepad.wButtons != KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons != 0 || (report.bThumbLX != 127 || report.bThumbLY != 129) || (report.bThumbRX != 127 || report.bThumbRY != 129) )) {
-						//printf("pressed another button\n"); 
-						MotionKeyOnlyPressed = false; MotionKeyOnlyCheckCount = 0; 
-					}
-				}
-				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI && (myPState.Gamepad.wButtons != KEY_ID_XBOX_ACTIVATE_MULTI || (report.bThumbLX != 127 || report.bThumbLY != 129) || (report.bThumbRX != 127 || report.bThumbRY != 129))) MotionKeyReleasedCount = 30;
-				if (MotionKeyReleasedCount > 0) MotionKeyReleasedCount--;
-				 
-				//printf("%d %d %d\n", MotionKeyOnlyCheckCount, MotionKeyReleasedCount, MotionKeyOnlyPressed);
-				//printf("%d\n", MotionKeyOnlyCheckCount);
 
-				if (myPState.Gamepad.wButtons & KEY_ID_XBOX_ACTIVATE_MULTI) {
-					myPState.Gamepad.wButtons &= ~KEY_ID_XBOX_ACTIVATE_MULTI;
-				}
-				if (MotionKeyOnlyCheckCount == 1 && MotionKeyOnlyPressed && MotionKeyReleasedCount == 0) {
-					myPState.Gamepad.wButtons |= KEY_ID_XBOX_ACTIVATE_MULTI; //|=
-					MotionKeyReleasedCount = 30; // Timeout to release the motion key button and don't execute other buttons
-					//printf("Motion Key pressed\n");
-				}*/
-
-				// Swap share and touchpad
 				if (SwapShareTouchPad == false) {
 					if (IsKeyPressed(KEY_ID_SHARE))
 						report.wButtons |= DS4_BUTTON_SHARE;
@@ -768,7 +730,6 @@ int main(int argc, char **argv)
 						report.wButtons |= DS4_BUTTON_SHARE;
 				}
 
-				// Exclude multi keys
 				if (XboxActivateMotionPressed == false) {
 					if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_Y)
 						report.wButtons |= DS4_BUTTON_TRIANGLE;
@@ -784,13 +745,12 @@ int main(int argc, char **argv)
 					if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB)
 						report.wButtons |= DS4_BUTTON_THUMB_RIGHT;
 
-					// Swap triggers and shoulders
 					if (SwapTriggersShoulders == false) {
 						if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)
 							report.wButtons |= DS4_BUTTON_SHOULDER_LEFT;
 						if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER)
 							report.wButtons |= DS4_BUTTON_SHOULDER_RIGHT;
-						
+
 						report.bTriggerL = myPState.Gamepad.bLeftTrigger;
 						report.bTriggerR = myPState.Gamepad.bRightTrigger;
 					}
@@ -805,9 +765,9 @@ int main(int argc, char **argv)
 							report.bTriggerR = 255;
 					}
 
-					if (report.bTriggerL > 0) // Specific of DualShock
-						report.wButtons |= DS4_BUTTON_TRIGGER_LEFT; 
-					if (report.bTriggerR > 0) // Specific of DualShock
+					if (report.bTriggerL > 0)
+						report.wButtons |= DS4_BUTTON_TRIGGER_LEFT;
+					if (report.bTriggerR > 0)
 						report.wButtons |= DS4_BUTTON_TRIGGER_RIGHT;
 
 					if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP)
@@ -829,35 +789,15 @@ int main(int argc, char **argv)
 						DS4_SET_DPAD_EX(&report, DS4_BUTTON_DPAD_SOUTHEAST);
 				}
 
-				// Touchpad swipes
 				if (report.bSpecial & DS4_SPECIAL_BUTTON_TOUCHPAD) {
 						if (!TouchPadPressedWhenSwiping && (report.bThumbRX != 127 || report.bThumbRY != 129)) {
 							report.bSpecial &= ~DS4_SPECIAL_BUTTON_TOUCHPAD;
 							if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) { report.wButtons &= ~DS4_BUTTON_THUMB_RIGHT; report.bSpecial |= DS4_SPECIAL_BUTTON_TOUCHPAD; }
 						}
 					Touch1.X = 960; Touch1.Y = 471;
-					/*if (report.bThumbRX > 127)
-						Touch1.X = 320 + (report.bThumbRX - 127) * 10;
-					if (report.bThumbRX < 127)
-						Touch1.X = 1600 - (-report.bThumbRX + 127) * 10;
-					if (report.bThumbRY > 129)
-						Touch1.Y = trunc(100 + (report.bThumbRY - 129) * 5.8);
-					if (report.bThumbRY < 129)
-						Touch1.Y = trunc(743 - (-report.bThumbRY + 129) * 5.8);
-
-					if (report.bThumbLX > 127)
-						Touch2.X = 320 + (report.bThumbLX - 127) * 10;
-					if (report.bThumbLX < 127)
-						Touch2.X = 1600 - (-report.bThumbLX + 127) * 10;
-					if (report.bThumbLY > 129)
-						Touch2.Y = trunc(100 + (report.bThumbLY - 129) * 5.8);
-					if (report.bThumbLY < 129)
-						Touch2.Y = trunc(743 - (-report.bThumbLY + 129) * 5.8);*/
 
 					double LeftStickValue = StickDeviationPercent(report.bThumbLX, report.bThumbLY);
 					double RightStickValue = StickDeviationPercent(report.bThumbRX, report.bThumbRY);
-
-					//printf(" %.2f %.2f %d %d \n", LeftStickValue, RightStickValue, report.bThumbRX, report.bThumbRY);
 
 					if (report.bThumbRX > 127)
 						Touch1.X = 200 + trunc(1519 * RightStickValue);
@@ -885,12 +825,12 @@ int main(int argc, char **argv)
 					report.bThumbLX = 128; report.bThumbLY = 128;
 					report.bThumbRX = 128; report.bThumbRY = 128;
 				}
-				
+
 			}
 		}
 		// Mouse and keyboard mode
 		else if (EmulationMode == KBMode) {
-			
+
 			PSPlusWindow = FindWindow(NULL, WindowTitle.c_str());
 			bool PSNowFound = (PSPlusWindow != 0) && (IsWindowVisible(PSPlusWindow)) && (PSPlusWindow == GetForegroundWindow());
 
@@ -898,7 +838,6 @@ int main(int argc, char **argv)
 			bool PSRemotePlayFound = (PSRemotePlayWindow != 0) && (IsWindowVisible(PSRemotePlayWindow)) && (PSRemotePlayWindow == GetForegroundWindow());
 
 			if (SkipPollCount == 0 && IsKeyPressed(VK_MENU)) {
-				// Switch profiles
 				if (IsKeyPressed(VK_UP) || IsKeyPressed(VK_DOWN)) {
 					SkipPollCount = SkipPollTimeOut;
 					if (IsKeyPressed(VK_UP)) if (ProfileIndex > 0) ProfileIndex--; else ProfileIndex = KMProfiles.size() - 1;
@@ -928,7 +867,6 @@ int main(int argc, char **argv)
 					SkipPollCount = SkipPollTimeOut;
 				}
 
-				// Custom fullscreen mode
 				if (IsKeyPressed(VK_F10)) {
 					if (PSPlusWindow != 0)
 						if (FullScreenMode) {
@@ -945,7 +883,6 @@ int main(int argc, char **argv)
 					SkipPollCount = SkipPollTimeOut;
 				}
 
-				// Cursor hide
 				if (CursorHidden == false && IsKeyPressed(VK_F2)) {
 					SetSystemCursor(CursorEmpty, OCR_NORMAL); CursorHidden = true;
 					printf(" The cursor is hidden. To display the cursor, press \"ALT\" + \"Escape\".\n");
@@ -963,21 +900,47 @@ int main(int argc, char **argv)
 				if (IsKeyPressed(VK_MENU) && IsKeyPressed(KEY_ID_STOP_CENTERING) && SkipPollCount == 0) { CenteringEnable = !CenteringEnable;  SkipPollCount = SkipPollTimeOut;}
 				if (CenteringEnable) GetMouseState();
 
-				if (InvertX)
-					DeltaMouseX = DeltaMouseX * -1;
-				if (InvertY)
-					DeltaMouseY = DeltaMouseY * -1;
+				// ----------- INÍCIO DA LÓGICA XIM MATRIX -----------
 
-				// Are there better options? / Есть вариант лучше?
-				if (DeltaMouseX > 0)
-					report.bThumbRX = 128 + DeadZoneDS4 + trunc( Clamp(DeltaMouseX * mouseSensetiveX, 0, 127 - DeadZoneDS4) );
-				if (DeltaMouseX < 0)
-					report.bThumbRX = 128 - DeadZoneDS4 + trunc( Clamp(DeltaMouseX * mouseSensetiveX, -127 + DeadZoneDS4, 0) );
-				if (DeltaMouseY < 0)
-					report.bThumbRY = 128 - DeadZoneDS4 + trunc( Clamp(DeltaMouseY * mouseSensetiveY, -127 + DeadZoneDS4, 0) );
-				if (DeltaMouseY > 0)
-					report.bThumbRY = 128 + DeadZoneDS4 + trunc( Clamp(DeltaMouseY * mouseSensetiveY, 0, 127 - DeadZoneDS4) );
-			
+				// 1. Aplicar Inversão ANTES de processar
+				double rawDeltaX = (double)DeltaMouseX;
+				double rawDeltaY = (double)DeltaMouseY;
+
+				if (InvertX) rawDeltaX *= -1;
+				if (InvertY) rawDeltaY *= -1;
+
+				// 2. Input Base
+				double targetX = rawDeltaX * mouseSensetiveX;
+				double targetY = rawDeltaY * mouseSensetiveY;
+
+				// 3. Suavização (Smoothing)
+				g_SmoothX = (g_SmoothX * (1.0 - mouseSmoothing)) + (targetX * mouseSmoothing);
+				g_SmoothY = (g_SmoothY * (1.0 - mouseSmoothing)) + (targetY * mouseSmoothing);
+
+				// 4. Curva Balística (Exponencial)
+				double magX = pow(abs(g_SmoothX), mouseExponent);
+				double magY = pow(abs(g_SmoothY), mouseExponent);
+
+				// Preservar sinal e aplicar Boost
+				int outX = 128;
+				int outY = 128;
+
+				if (magX > 0.1) {
+					if (g_SmoothX > 0) outX = 128 + mouseBoost + (int)magX;
+					else               outX = 128 - mouseBoost - (int)magX;
+				}
+
+				if (magY > 0.1) {
+					if (g_SmoothY > 0) outY = 128 + mouseBoost + (int)magY;
+					else               outY = 128 - mouseBoost - (int)magY;
+				}
+
+				// Clamp final para BYTE (0-255)
+				report.bThumbRX = (BYTE)Clamp((float)outX, 0, 255);
+				report.bThumbRY = (BYTE)Clamp((float)outY, 0, 255);
+
+				// ----------- FIM DA LÓGICA XIM MATRIX -----------
+
 				if (LeftAnalogStick == false) {
 					if (IsKeyPressed(KEY_ID_LEFT_STICK_UP)) report.bThumbLY = 0;
 					if (IsKeyPressed(KEY_ID_LEFT_STICK_DOWN)) report.bThumbLY = 255;
@@ -1011,7 +974,6 @@ int main(int argc, char **argv)
 					if (LeftAnalogY < 0) LeftAnalogY = 0;
 					report.bThumbLY = LeftAnalogY;
 					report.bThumbLX = LeftAnalogX;
-					//printf("%d %d\n", LeftAnalogX, LeftAnalogY);
 				}
 
 				if (SwapSticks) {
@@ -1026,7 +988,7 @@ int main(int argc, char **argv)
 					if (IsKeyPressed(KEY_ID_RIGHT_TRIGGER))
 						report.bTriggerR = 255;
 				}
-				else { // With emulate analog triggers
+				else {
 
 					if (IsKeyPressed(KEY_ID_LEFT_TRIGGER)) {
 						if (LeftTriggerValue < 255)
@@ -1036,7 +998,7 @@ int main(int argc, char **argv)
 						if (LeftTriggerValue > 0)
 							LeftTriggerValue -= StepTriggerValue;
 					}
-					
+
 					report.bTriggerL = trunc( Clamp(LeftTriggerValue, 0, 255) );
 
 					if (IsKeyPressed(KEY_ID_RIGHT_TRIGGER)) {
@@ -1050,10 +1012,10 @@ int main(int argc, char **argv)
 
 					report.bTriggerR = trunc( Clamp(RightTriggerValue, 0, 255) );
 				}
-				
-				if (report.bTriggerL > 0) // Specific of DualShock 
-					report.wButtons |= DS4_BUTTON_TRIGGER_LEFT; 
-				if (report.bTriggerR > 0) // Specific of DualShock
+
+				if (report.bTriggerL > 0)
+					report.wButtons |= DS4_BUTTON_TRIGGER_LEFT;
+				if (report.bTriggerR > 0)
 					report.wButtons |= DS4_BUTTON_TRIGGER_RIGHT;
 
 				if (IsKeyPressed(KEY_ID_SHARE))
@@ -1094,72 +1056,58 @@ int main(int argc, char **argv)
 		}
 
 		// Any mode
-		// Touchpad, Finger 1
-		// Left
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_FIRST_LEFT)) {
 			Touch1.X = TouchLeftMode(Touch1.LeftMode);
 			Touch1.Y = TouchTopMode(Touch1.TopMode);
 			if (Touch1.SkipPollLeft == 0) { if (Touch1.LeftMode > 0) --Touch1.LeftMode; Touch1.SkipPollLeft = 10; }
 		}
-		// Right
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_FIRST_RIGHT)) {
 			Touch1.X = TouchLeftMode(Touch1.LeftMode);
 			Touch1.Y = TouchTopMode(Touch1.TopMode);
 			if (Touch1.SkipPollLeft == 0) { if (Touch1.LeftMode < TOUCH_LEFT_MODE_MAX) ++Touch1.LeftMode; Touch1.SkipPollLeft = 10; }
 		}
-		// Up
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_FIRST_UP)) {
 			Touch1.X = TouchLeftMode(Touch1.LeftMode);
 			Touch1.Y = TouchTopMode(Touch1.TopMode);
 			if (Touch1.SkipPollTop == 0) { if (Touch1.TopMode > 0) --Touch1.TopMode; Touch1.SkipPollTop = SkipPollTimeOut; }
 		}
-		// Down
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_FIRST_DOWN)) {
 			Touch1.X = TouchLeftMode(Touch1.LeftMode);
 			Touch1.Y = TouchTopMode(Touch1.TopMode);
 			if (Touch1.SkipPollTop == 0) { if (Touch1.TopMode < TOUCH_TOP_MODE_MAX) ++Touch1.TopMode; Touch1.SkipPollTop = SkipPollTimeOut; }
 		}
 
-
-		// Finger 2
-		// Left
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_SECOND_LEFT)) {
 			Touch2.X = TouchLeftMode(Touch2.LeftMode);
 			Touch2.Y = TouchTopMode(Touch2.TopMode);
 			if (Touch2.SkipPollLeft == 0) { if (Touch2.LeftMode > 0) --Touch2.LeftMode; Touch2.SkipPollLeft = 10; }
 		}
-		// Right
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_SECOND_RIGHT)) {
 			Touch2.X = TouchLeftMode(Touch2.LeftMode);
 			Touch2.Y = TouchTopMode(Touch2.TopMode);
 			if (Touch2.SkipPollLeft == 0) { if (Touch2.LeftMode < TOUCH_LEFT_MODE_MAX) ++Touch2.LeftMode; Touch2.SkipPollLeft = 10; }
 		}
-		// Up
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_SECOND_UP)) {
 			Touch2.X = TouchLeftMode(Touch2.LeftMode);
 			Touch2.Y = TouchTopMode(Touch2.TopMode);
 			if (Touch2.SkipPollTop == 0) { if (Touch2.TopMode > 0) --Touch2.TopMode; Touch2.SkipPollTop = SkipPollTimeOut; }
 		}
-		// Down
 		if (IsKeyPressed(KEY_ID_TOUCHPAD_SECOND_DOWN)) {
 			Touch2.X = TouchLeftMode(Touch2.LeftMode);
 			Touch2.Y = TouchTopMode(Touch2.TopMode);
 			if (Touch2.SkipPollTop == 0) { if (Touch2.TopMode < TOUCH_TOP_MODE_MAX) ++Touch2.TopMode; Touch2.SkipPollTop = SkipPollTimeOut; }
 		}
 
-		// Touchpad swipes, last
 		if (TouchpadSwipeUp) { TouchpadSwipeUp = false; Touch1.X = 960; Touch1.Y = 100; }
 		if (TouchpadSwipeDown) { TouchpadSwipeDown = false; Touch1.X = 960; Touch1.Y = 841; }
 		if (TouchpadSwipeLeft) { TouchpadSwipeLeft = false; Touch1.X = 200; Touch1.Y = 471; }
 		if (TouchpadSwipeRight) { TouchpadSwipeRight = false; Touch1.X = 1719; Touch1.Y = 471; }
 
-		// Swipes
 		if (TouchpadSwipeUp == false && IsKeyPressed(KEY_ID_TOUCHPAD_SWIPE_UP)) { Touch1.X = 960; Touch1.Y = 841; TouchpadSwipeUp = true; }
 		if (TouchpadSwipeDown == false && IsKeyPressed(KEY_ID_TOUCHPAD_SWIPE_DOWN)) { Touch1.X = 960; Touch1.Y = 100; TouchpadSwipeDown = true; }
 		if (TouchpadSwipeLeft == false && IsKeyPressed(KEY_ID_TOUCHPAD_SWIPE_LEFT)) { Touch1.X = 1719; Touch1.Y = 471; TouchpadSwipeLeft = true; }
 		if (TouchpadSwipeRight == false && IsKeyPressed(KEY_ID_TOUCHPAD_SWIPE_RIGHT)) { Touch1.X = 200; Touch1.Y = 471; TouchpadSwipeRight = true; }
 
-		// Motion shaking
 		if (IsKeyPressed(KEY_ID_MOTION_SHAKING)) MotionShaking = true;
 		if (IsKeyPressed(KEY_ID_MOTION_Y_ADD)) MotionYAdd = true;
 		if (IsKeyPressed(KEY_ID_MOTION_Y_SUB)) MotionYSub = true;
@@ -1168,59 +1116,44 @@ int main(int argc, char **argv)
 		if (IsKeyPressed(KEY_ID_MOTION_Z_ADD)) MotionZAdd = true;
 		if (IsKeyPressed(KEY_ID_MOTION_Z_SUB)) MotionZSub = true;
 
-		// состояние пальцев сейчас
 		Touch1.IsChanged = (Touch1.X | Touch1.Y) != 0;
 		Touch2.IsChanged = (Touch2.X | Touch2.Y) != 0;
 
-		// фронт касания -> новый track-id (0..127)
 		if (Touch1.IsChanged && !Touch1.PrevTouched) Touch1.ID = uint8_t((Touch1.ID + 1) & 0x7F);
 		if (Touch2.IsChanged && !Touch2.PrevTouched) Touch2.ID = uint8_t((Touch2.ID + 1) & 0x7F);
 
-		// previous, если есть прошлый пакет
 		report.bTouchPacketsN = LastTouchValid ? 2 : 1;
 		if (LastTouchValid) report.sPreviousTouch[0] = LastTouch;
 
-		// палец 1
 		if (Touch1.IsChanged) {
-			report.sCurrentTouch.bIsUpTrackingNum1 = uint8_t(Touch1.ID & 0x7F); // down
+			report.sCurrentTouch.bIsUpTrackingNum1 = uint8_t(Touch1.ID & 0x7F);
 			report.sCurrentTouch.bTouchData1[0] = uint8_t(Touch1.X & 0xFF);
 			report.sCurrentTouch.bTouchData1[1] = uint8_t(((Touch1.X >> 8) & 0x0F) | ((Touch1.Y & 0x0F) << 4));
 			report.sCurrentTouch.bTouchData1[2] = uint8_t((Touch1.Y >> 4) & 0xFF);
 		}
 
-		// палец 2
 		if (Touch2.IsChanged) {
-			report.sCurrentTouch.bIsUpTrackingNum2 = uint8_t(Touch2.ID & 0x7F); // down
+			report.sCurrentTouch.bIsUpTrackingNum2 = uint8_t(Touch2.ID & 0x7F);
 			report.sCurrentTouch.bTouchData2[0] = uint8_t(Touch2.X & 0xFF);
 			report.sCurrentTouch.bTouchData2[1] = uint8_t(((Touch2.X >> 8) & 0x0F) | ((Touch2.Y & 0x0F) << 4));
 			report.sCurrentTouch.bTouchData2[2] = uint8_t((Touch2.Y >> 4) & 0xFF);
 		}
 
-		// счетчик пакетов 0..255
 		report.sCurrentTouch.bPacketCounter = ++TouchPacket;
 
-		// сохранить текущий как previous на следующий тик
 		LastTouch = report.sCurrentTouch;
 		LastTouchValid = true;
 
-		// Запоминаем, что было нажатие
 		Touch1.PrevTouched = Touch1.IsChanged;
 		Touch2.PrevTouched = Touch2.IsChanged;
 
-		// freePIE gyro and accel in rad/s and m/s^2, need to scale with accel and gyro configs
 		report.wAccelX = trunc(Clamp(AccelX / AccelSens * 32767, -32767, 32767)) * InverseXStatus;
 		report.wAccelY = trunc(Clamp(AccelY / AccelSens * 32767, -32767, 32767)) * InverseYStatus;
 		report.wAccelZ = trunc(Clamp(AccelZ / AccelSens * 32767, -32767, 32767)) * InverseZStatus;
 		report.wGyroX = trunc(Clamp(GyroX / GyroSens * 32767, -32767, 32767)) * InverseXStatus;
 		report.wGyroY = trunc(Clamp(GyroY / GyroSens * 32767, -32767, 32767)) * InverseYStatus;
 		report.wGyroZ = trunc(Clamp(GyroZ / GyroSens * 32767, -32767, 32767)) * InverseZStatus;
-		// if ((IsKeyPressed(VK_NUMPAD1)) printf("%d\t%d\t%d\t%d\t%d\t%d\t\n", report.wAccelX, report.wAccelY, report.wAccelZ, report.wGyroX, report.wGyroY, report.wGyroZ);
 
-		// Def motion???
-		//report.wAccelX = 0;		report.wAccelY = 32767;		report.wAccelZ = 0;
-		//report.wGyroX = 0;		report.wGyroY = 32767;		report.wGyroZ = 0;
-
-		// Motion shaking
 		if (MotionShaking) {
 			MotionShakingSwap = !MotionShakingSwap;
 			if (MotionShakingSwap) {
@@ -1231,36 +1164,33 @@ int main(int argc, char **argv)
 				report.wGyroX = 2700;		report.wGyroY = -5000;		report.wGyroZ = 140;
 			}
 		}
-		else if (MotionXAdd) {        // движение вправо по X (roll +)
+		else if (MotionXAdd) {
 			report.wAccelX = 32767; report.wAccelY = 0;      report.wAccelZ = 0;
 			report.wGyroX = 32767; report.wGyroY = 0;      report.wGyroZ = 0;
 		}
-		else if (MotionXSub) {      // движение влево по X (roll -)
+		else if (MotionXSub) {
 			report.wAccelX = -32767; report.wAccelY = 0;     report.wAccelZ = 0;
 			report.wGyroX = -32767; report.wGyroY = 0;     report.wGyroZ = 0;
 		}
-		else if (MotionYAdd) {      // наклон вперёд по Y (pitch +)
+		else if (MotionYAdd) {
 			report.wAccelX = 0;      report.wAccelY = 32767; report.wAccelZ = 0;
 			report.wGyroX = 0;      report.wGyroY = 32767; report.wGyroZ = 0;
 		}
-		else if (MotionYSub) {      // наклон назад по Y (pitch -)
+		else if (MotionYSub) {
 			report.wAccelX = 0;      report.wAccelY = -32767; report.wAccelZ = 0;
 			report.wGyroX = 0;      report.wGyroY = -32767; report.wGyroZ = 0;
 		}
-		else if (MotionZAdd) {      // поворот вправо по Z (yaw +)
+		else if (MotionZAdd) {
 			report.wAccelX = 0;      report.wAccelY = 0;      report.wAccelZ = 32767;
 			report.wGyroX = 0;      report.wGyroY = 0;      report.wGyroZ = 32767;
 		}
-		else if (MotionZSub) {      // поворот влево по Z (yaw -)
+		else if (MotionZSub) {
 			report.wAccelX = 0;      report.wAccelY = 0;      report.wAccelZ = -32767;
 			report.wGyroX = 0;      report.wGyroY = 0;      report.wGyroZ = -32767;
 		}
 
-		// Special keys
 		if (IsKeyPressed(KEY_ID_PS))
 			report.bSpecial |= DS4_SPECIAL_BUTTON_PS;
-
-		// if (IsKeyPressed(VK_NUMPAD0)) system("cls");
 
 		auto now = std::chrono::steady_clock::now();
 		auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
@@ -1268,7 +1198,6 @@ int main(int argc, char **argv)
 
 		ret = vigem_target_ds4_update_ex(client, ds4, report);
 
-		// Don't overload the CPU with reading
 		if (EmulationMode == XboxMode)
 			Sleep(SleepTimeOutXbox);
 		else
