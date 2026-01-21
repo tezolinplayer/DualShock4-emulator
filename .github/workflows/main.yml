@@ -21,12 +21,19 @@ jobs:
     - name: Download ViGEm headers
       shell: powershell
       run: |
+        # Cria a pasta correta
         New-Item -ItemType Directory -Force -Path Source\ViGEm
+        
+        # Define a URL base do repositório oficial
         $url = "https://raw.githubusercontent.com/nefarius/ViGEmClient/master/include/ViGEm"
+        
+        # Baixa SOMENTE os arquivos que existem e são necessários
         Invoke-WebRequest "$url/Client.h" -OutFile "Source\ViGEm\Client.h"
         Invoke-WebRequest "$url/Common.h" -OutFile "Source\ViGEm\Common.h"
         Invoke-WebRequest "$url/Util.h" -OutFile "Source\ViGEm\Util.h"
-        Invoke-WebRequest "$url/ViGEmClient.h" -OutFile "Source\ViGEm\ViGEmClient.h"
+        
+        Write-Host "Downloads concluídos. Verificando pasta:"
+        Get-ChildItem Source\ViGEm
 
     - name: Build Solution
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
