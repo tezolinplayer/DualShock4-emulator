@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    permissions:
-      contents: read
 
     steps:
     - name: Checkout repo
@@ -20,7 +18,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente
+    # 1. Cria os Headers (.h) manualmente para garantir as definições corretas
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -86,32 +84,33 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. SOLUÇÃO FINAL: Baixa o CÓDIGO FONTE do ViGEm e compila a LIB na hora
+    # 2. SOLUÇÃO: Compila a LIB do código fonte (Zero risco de link quebrado)
     - name: Build ViGEmClient from Source
+      shell: powershell
       run: |
-        # Baixa o repositório oficial
-        git clone https://github.com/nefarius/ViGEmClient.git vigem_build
+        git clone https://github.com/nefarius/ViGEmClient.git vigem_src
         
-        # Compila a biblioteca (gera o arquivo .lib)
-        msbuild vigem_build/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+        # Restaura pacotes NuGet necessários para compilar o ViGEm
+        nuget restore vigem_src/ViGEmClient.sln
         
-        # Cria a pasta de destino
+        # Compila a biblioteca em Release x64
+        msbuild vigem_src/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
+        
+        # Cria a pasta onde o seu emulador espera encontrar a lib
         New-Item -ItemType Directory -Force -Path Source\ViGEm\lib\x64
         
-        # Copia o arquivo compilado para onde o seu projeto espera
-        # O caminho de saída pode variar, procuramos recursivamente para garantir
-        $libPath = Get-ChildItem -Path "vigem_build" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
+        # Encontra o arquivo compilado e copia para o lugar certo
+        $libPath = Get-ChildItem -Path "vigem_src" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
         
         if ($libPath) {
             Copy-Item -Path $libPath.FullName -Destination "Source\ViGEm\lib\x64\ViGEmClient.lib"
-            Write-Host "SUCESSO: Lib compilada e instalada!"
+            Write-Host "SUCESSO: Lib compilada e instalada em Source\ViGEm\lib\x64\ViGEmClient.lib"
         } else {
-            Write-Error "ERRO: Falha ao compilar ViGEmClient. Lib não encontrada."
+            Write-Error "ERRO: O arquivo ViGEmClient.lib não foi gerado na compilação."
             exit 1
         }
-      shell: powershell
 
-    # 3. Compila o seu emulador
+    # 3. Compila o seu emulador (Agora vai achar a lib!)
     - name: Build Solution
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
 
