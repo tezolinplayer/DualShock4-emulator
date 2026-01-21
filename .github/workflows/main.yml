@@ -85,35 +85,43 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Compila a LIB do ViGEm (Gera o arquivo ViGEmClient.lib válido)
-    - name: Build and Install ViGEmClient
+    # 2. Compila a LIB do ViGEm e salva na pasta "Libs"
+    - name: Build ViGEmClient Lib
       shell: powershell
       run: |
         git clone https://github.com/nefarius/ViGEmClient.git vigem_src
         nuget restore vigem_src/ViGEmClient.sln
         
-        # Define pasta temporária para output da compilação
-        $outDir = "$(Get-Location)\vigem_bin\"
-        New-Item -ItemType Directory -Force -Path $outDir
+        # Cria pasta "Libs" na raiz
+        $libsDir = "${{ github.workspace }}\Libs"
+        New-Item -ItemType Directory -Force -Path $libsDir
         
-        # Compila a LIB
-        msbuild vigem_src/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:OutDir=$outDir
+        # Compila com saída direcionada
+        msbuild vigem_src/src/ViGEmClient.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:OutDir="$libsDir\"
         
-        # Define onde o seu projeto espera encontrar a lib (baseado nos seus logs anteriores)
-        $targetDir = "Source\ViGEm\lib\x64"
-        New-Item -ItemType Directory -Force -Path $targetDir
-        
-        # Copia o arquivo gerado para o local esperado
-        $libSource = "$outDir\ViGEmClient.lib"
-        if (Test-Path $libSource) {
-            Copy-Item -Path $libSource -Destination "$targetDir\ViGEmClient.lib"
-            Write-Host "SUCESSO: Lib instalada em $targetDir\ViGEmClient.lib"
+        # Verifica se criou
+        if (Test-Path "$libsDir\ViGEmClient.lib") {
+            Write-Host "SUCESSO: Lib gerada em $libsDir\ViGEmClient.lib"
         } else {
-            Write-Error "FALHA: ViGEmClient.lib não foi gerada em $outDir"
+            Write-Error "FALHA CRÍTICA: ViGEmClient.lib não encontrada."
             exit 1
         }
 
-    # 3. Compila o Emulador (Sem argumentos extras, pois a lib já está no lugar certo)
+    # 3. TRUQUE FINAL: Cria o arquivo de configuração global para forçar o Linker a ver a pasta Libs
+    - name: Create Global Build Props
+      shell: powershell
+      run: |
+        $propsContent = @"
+        <Project>
+          <PropertyGroup>
+            <LibraryPath>`$(MSBuildThisFileDirectory)Libs;`$(LibraryPath)</LibraryPath>
+          </PropertyGroup>
+        </Project>
+        "@
+        Set-Content -Path "Directory.Build.props" -Value $propsContent
+        Write-Host "Arquivo Directory.Build.props criado com sucesso."
+
+    # 4. Compila o Emulador (O MSBuild vai ler o arquivo acima automaticamente)
     - name: Build Solution
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
 
