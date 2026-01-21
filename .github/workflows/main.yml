@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read # Necessário para o GITHUB_TOKEN funcionar
+      contents: read
 
     steps:
     - name: Checkout repo
@@ -20,7 +20,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente
+    # 1. Cria os Headers (.h) manualmente (Essencial para não dar erro de compilação)
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -86,8 +86,8 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Baixa a LIB usando API Autenticada (Resolve o Rate Limit)
-    - name: Download ViGEm Lib (Authenticated)
+    # 2. Baixa a LIB procurando automaticamente a ÚLTIMA versão (Latest Release)
+    - name: Download ViGEm Lib (Latest Auto)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: powershell
@@ -95,37 +95,44 @@ jobs:
         $destDir = "Source\ViGEm\lib\x64"
         New-Item -ItemType Directory -Force -Path $destDir
         
-        $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases/tags/v1.17.333"
-        
-        # --- AQUI ESTÁ A CORREÇÃO ---
-        # Adiciona o cabeçalho de autorização para evitar o erro 403 Rate Limit
+        # Usa a API para buscar a release marcada como "latest"
+        $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases/latest"
         $headers = @{ Authorization = "token $env:GITHUB_TOKEN" }
         
-        Write-Host "Consultando API (Autenticado)..."
+        Write-Host "Buscando última versão..."
         try {
             $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
+            Write-Host "Versão encontrada: $($release.tag_name)"
             
-            # Procura o asset que tem x64 e VS2019 no nome
-            $asset = $release.assets | Where-Object { $_.name -like "*x64*VS2019.zip" } | Select-Object -First 1
+            # Procura qualquer asset que pareça com o SDK x64 (filtra por x64 e .zip)
+            $asset = $release.assets | Where-Object { $_.name -like "*x64*.zip" } | Select-Object -First 1
             
-            if (!$asset) { throw "Asset x64 não encontrado na release v1.17.333." }
+            if (!$asset) { 
+                # Fallback: Se não achar na latest, tenta listar todas e pegar a primeira
+                Write-Host "Asset não encontrado na latest. Tentando primeira release da lista..."
+                $apiUrlList = "https://api.github.com/repos/nefarius/ViGEmClient/releases"
+                $releases = Invoke-RestMethod -Uri $apiUrlList -Headers $headers
+                $asset = $releases[0].assets | Where-Object { $_.name -like "*x64*.zip" } | Select-Object -First 1
+            }
             
-            # O link de download do browser não precisa de auth, mas a API sim
-            Write-Host "Baixando: $($asset.browser_download_url)"
+            if (!$asset) { throw "Nenhum arquivo ZIP x64 encontrado nas releases." }
+            
+            Write-Host "Baixando asset: $($asset.name)"
             Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "vigem_sdk.zip"
             
-            Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp"
+            Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp" -Force
             
+            # Procura o arquivo .lib recursivamente
             $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
             
             if ($libFile) {
                 Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
-                Write-Host "SUCESSO: Lib instalada."
+                Write-Host "SUCESSO: Lib instalada em $destDir\ViGEmClient.lib"
             } else {
-                throw "Arquivo .lib não encontrado no zip."
+                throw "O arquivo ViGEmClient.lib não estava dentro do ZIP baixado."
             }
         } catch {
-            Write-Error "Erro: $_"
+            Write-Error "Erro fatal no download: $_"
             exit 1
         }
 
