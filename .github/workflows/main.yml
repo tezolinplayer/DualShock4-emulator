@@ -21,7 +21,7 @@ jobs:
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v1.0.5
 
-    # 1. Cria os Headers (.h) manualmente (Isso está funcionando bem)
+    # 1. Cria os Headers (.h) - VERSÃO CORRIGIDA (SEM DLLIMPORT)
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -61,23 +61,24 @@ jobs:
         "@
         Set-Content -Path "Source\ViGEm\Common.h" -Value $commonContent
 
+        # --- AQUI ESTAVA O ERRO ANTES. AGORA ESTÁ SEM DLLIMPORT ---
         $clientContent = @"
         #pragma once
         #include "Common.h"
         #ifdef __cplusplus
         extern "C" {
         #endif
-            __declspec(dllimport) PVIGEM_CLIENT vigem_alloc(void);
-            __declspec(dllimport) void vigem_free(PVIGEM_CLIENT client);
-            __declspec(dllimport) int vigem_connect(PVIGEM_CLIENT client);
-            __declspec(dllimport) void vigem_disconnect(PVIGEM_CLIENT client);
-            __declspec(dllimport) PVIGEM_TARGET vigem_target_ds4_alloc(void);
-            __declspec(dllimport) void vigem_target_free(PVIGEM_TARGET target);
-            __declspec(dllimport) int vigem_target_add(PVIGEM_CLIENT client, PVIGEM_TARGET target);
-            __declspec(dllimport) int vigem_target_remove(PVIGEM_CLIENT client, PVIGEM_TARGET target);
-            __declspec(dllimport) int vigem_target_ds4_register_notification(PVIGEM_CLIENT client, PVIGEM_TARGET target, PVIGEM_DS4_NOTIFICATION notification, LPVOID userData);
-            __declspec(dllimport) void vigem_target_ds4_unregister_notification(PVIGEM_TARGET target);
-            __declspec(dllimport) int vigem_target_ds4_update_ex(PVIGEM_CLIENT client, PVIGEM_TARGET target, DS4_REPORT_EX report);
+            PVIGEM_CLIENT vigem_alloc(void);
+            void vigem_free(PVIGEM_CLIENT client);
+            int vigem_connect(PVIGEM_CLIENT client);
+            void vigem_disconnect(PVIGEM_CLIENT client);
+            PVIGEM_TARGET vigem_target_ds4_alloc(void);
+            void vigem_target_free(PVIGEM_TARGET target);
+            int vigem_target_add(PVIGEM_CLIENT client, PVIGEM_TARGET target);
+            int vigem_target_remove(PVIGEM_CLIENT client, PVIGEM_TARGET target);
+            int vigem_target_ds4_register_notification(PVIGEM_CLIENT client, PVIGEM_TARGET target, PVIGEM_DS4_NOTIFICATION notification, LPVOID userData);
+            void vigem_target_ds4_unregister_notification(PVIGEM_TARGET target);
+            int vigem_target_ds4_update_ex(PVIGEM_CLIENT client, PVIGEM_TARGET target, DS4_REPORT_EX report);
         #ifdef __cplusplus
         }
         #endif
@@ -85,42 +86,34 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Compila a LIB do ViGEm e Caça o Arquivo Gerado
-    - name: Build and Locate ViGEmClient Lib
+    # 2. Compila a LIB do ViGEm e move para a pasta esperada
+    - name: Build ViGEmClient Lib
       shell: powershell
       run: |
         git clone https://github.com/nefarius/ViGEmClient.git vigem_src
-        
-        # Restaura NuGet para a SOLUÇÃO inteira
         nuget restore vigem_src/ViGEmClient.sln
         
         Write-Host "Compilando ViGEmClient..."
-        # Compila a SOLUÇÃO (evita erro MSB8013) ignorando erros de warning
-        # O PlatformTarget=x64 é importante aqui
+        # Ignora avisos para garantir que o build termine
         msbuild vigem_src/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:TreatWarningsAsErrors=false
         
-        # Prepara a pasta de destino que o emulador exige
+        # Prepara a pasta de destino
         $destDir = "Source\ViGEm\lib\x64"
         New-Item -ItemType Directory -Force -Path $destDir
         
-        Write-Host "Procurando ViGEmClient.lib em toda a pasta vigem_src..."
-        
-        # Procura recursivamente pelo arquivo .lib (Isso resolve o problema de 'onde ele salvou?')
+        Write-Host "Procurando lib gerada..."
         $libFile = Get-ChildItem -Path "vigem_src" -Recurse -Filter "ViGEmClient.lib" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
         
         if ($libFile) {
             Write-Host "LIB ENCONTRADA: $($libFile.FullName)"
             Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
-            Write-Host "SUCESSO: Lib copiada para $destDir\ViGEmClient.lib"
+            Write-Host "Copiado para $destDir\ViGEmClient.lib"
         } else {
-            Write-Error "FALHA CRÍTICA: O arquivo ViGEmClient.lib não foi encontrado após a compilação."
-            
-            # Debug: Lista arquivos gerados para entendermos o que aconteceu
-            Get-ChildItem -Path "vigem_src" -Recurse -Filter "*.lib"
+            Write-Error "FALHA CRÍTICA: O arquivo ViGEmClient.lib não foi encontrado."
             exit 1
         }
 
-    # 3. Compila o Emulador (Agora a Lib estará no lugar certo)
+    # 3. Compila o Emulador
     - name: Build Solution
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
 
