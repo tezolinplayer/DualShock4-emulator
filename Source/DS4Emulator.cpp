@@ -37,6 +37,11 @@ int DeltaMouseX, DeltaMouseY;
 HWND PSPlusWindow = 0;
 HWND PSRemotePlayWindow = 0;
 
+// --- GLOBAL VARIABLES (FIXED SCOPE) ---
+std::string WindowTitle = "PlayStation Plus";
+std::string WindowTitle2 = "PS4 Remote Play";
+// --------------------------------------
+
 // Variáveis para o algoritmo XIM (Smoothing Globais)
 static double g_SmoothX = 0;
 static double g_SmoothY = 0;
@@ -226,7 +231,7 @@ void LoadKMProfile(std::string ProfileFile) {
 void DefaultMainText() {
 	if (EmulationMode == XboxMode) {
 		printf("\n Emulating a DualShock 4 using an Xbox controller.\n");
-		// ... (código xbox omitido para economizar espaço, mantenha se usar)
+		// ... (código xbox omitido para economizar espaço)
 	}
 	else {
 		printf("\n [DS4 XIM MATRIX MODE ACTIVATED]\n");
@@ -265,8 +270,6 @@ void DefaultMainText() {
 }
 
 void RussianMainText() {
-	// ... (Versão Russa pode ficar igual ou ser atualizada se você usar)
-	// Para garantir que funcione, vamos usar a DefaultMainText se a língua for inglês.
 	if (EmulationMode == XboxMode) {
 		printf("\n Эмуляция DualShock 4 с помощью контроллера Xbox.\n");
 	}
@@ -280,7 +283,6 @@ void RussianMainText() {
 		printf(" Чувств: %.1f | Сглаживание: %.2f | Кривая: %.2f | Буст: %d\n", AdsSettings.SensX, AdsSettings.Smoothing, AdsSettings.Curve, AdsSettings.Boost);
 		printf(" ---------------------------------------------------------\n\n");
 		
-		// ... resto do código russo original ...
 		printf(" Нажмите \"ALT + Escape\", чтобы выйти.\n");
 	}
 }
@@ -401,8 +403,12 @@ int main(int argc, char **argv)
 	std::string DefaultProfile = IniFile.ReadString("KeyboardMouse", "DefaultProfile", "Default.ini");
 
 	int SleepTimeOutKB = IniFile.ReadInteger("KeyboardMouse", "SleepTimeOut", 1);
-	std::string WindowTitle = IniFile.ReadString("KeyboardMouse", "ActivateOnlyInWindow", "PlayStation Plus");
-	std::string WindowTitle2 = IniFile.ReadString("KeyboardMouse", "ActivateOnlyInWindow2", "PS4 Remote Play");
+	
+	// --- FIXED: GLOBAL VARIABLE ASSIGNMENT ---
+	WindowTitle = IniFile.ReadString("KeyboardMouse", "ActivateOnlyInWindow", "PlayStation Plus");
+	WindowTitle2 = IniFile.ReadString("KeyboardMouse", "ActivateOnlyInWindow2", "PS4 Remote Play");
+	// -----------------------------------------
+
 	int FullScreenTopOffset = IniFile.ReadInteger("KeyboardMouse", "FullScreenTopOffset", -50);
 	bool HideTaskBar = IniFile.ReadBoolean("KeyboardMouse", "HideTaskBarInFullScreen", true);
 	bool FullScreenMode = false;
