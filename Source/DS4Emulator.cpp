@@ -9,6 +9,19 @@
 //#include <winsock2.h>
 #pragma comment (lib, "WSock32.Lib")
 
+// --- ESTRUTURAS PARA LOGICA XIM ---
+struct AimSettings {
+	float SensX;
+	float SensY;
+	float Smoothing; // 0.0 a 1.0
+	float Curve;     // Exponente (1.0 = linear)
+	int Boost;       // Anti-Deadzone
+};
+
+AimSettings HipSettings;
+AimSettings AdsSettings;
+// ----------------------------------
+
 _XInputGetState MyXInputGetState;
 _XInputSetState MyXInputSetState;
 _XINPUT_STATE myPState;
@@ -19,15 +32,12 @@ static std::mutex m;
 
 int m_HalfWidth = 1920 / 2;
 int m_HalfHeight = 1080 / 2;
-float mouseSensetiveY;
-float mouseSensetiveX;
 bool firstCP = true;
 int DeltaMouseX, DeltaMouseY;
 HWND PSPlusWindow = 0;
 HWND PSRemotePlayWindow = 0;
 
-// Variáveis para o algoritmo XIM (Smoothing)
-// Declaradas globalmente ou estáticas para manter o histórico entre frames
+// Variáveis para o algoritmo XIM (Smoothing Globais)
 static double g_SmoothX = 0;
 static double g_SmoothY = 0;
 
@@ -67,7 +77,8 @@ void MotionReceiver()
 				GyroZ = bytesToFloat(freePieIMU[14], freePieIMU[15], freePieIMU[16], freePieIMU[17]);
 				GyroX = bytesToFloat(freePieIMU[18], freePieIMU[19], freePieIMU[20], freePieIMU[21]);
 				GyroY = bytesToFloat(freePieIMU[22], freePieIMU[23], freePieIMU[24], freePieIMU[25]);
-			} else { // portrait mapping
+			}
+			else { // portrait mapping
 				AccelX = bytesToFloat(freePieIMU[2], freePieIMU[3], freePieIMU[4], freePieIMU[5]);
 				AccelZ = bytesToFloat(freePieIMU[6], freePieIMU[7], freePieIMU[8], freePieIMU[9]);
 				AccelY = bytesToFloat(freePieIMU[10], freePieIMU[11], freePieIMU[12], freePieIMU[13]);
@@ -76,7 +87,8 @@ void MotionReceiver()
 				GyroZ = bytesToFloat(freePieIMU[18], freePieIMU[19], freePieIMU[20], freePieIMU[21]);
 				GyroY = bytesToFloat(freePieIMU[22], freePieIMU[23], freePieIMU[24], freePieIMU[25]);
 			}
-		} else Sleep(SleepTimeOutMotion); // Don't overload the CPU with reading
+		}
+		else Sleep(SleepTimeOutMotion); // Don't overload the CPU with reading
 	}
 }
 
@@ -408,30 +420,33 @@ int main(int argc, char **argv)
 				if (iResult != SOCKET_ERROR) {
 					SocketActivated = true;
 					pSocketThread = new std::thread(MotionReceiver);
-				} else {
+				}
+				else {
 					WSACleanup();
 					SocketActivated = false;
 				}
-			} else {
+			}
+			else {
 				WSACleanup();
 				SocketActivated = false;
 			}
-		} else {
+		}
+		else {
 			WSACleanup();
 			SocketActivated = false;
 		}
 	}
 	int MotionSens = IniFile.ReadInteger("Motion", "Sens", 100);
-	float GyroSens = 35 - IniFile.ReadInteger("Motion", "GyroSens", 100)/100 * 33;
-	float AccelSens = 160 - IniFile.ReadInteger("Motion", "AccelSens", 100)/100 * 140;
-	int InverseXStatus = IniFile.ReadBoolean("Motion", "InverseX", false) == false ? 1 : -1 ;
-	int InverseYStatus = IniFile.ReadBoolean("Motion", "InverseY", false) == false ? 1 : -1 ;
-	int InverseZStatus = IniFile.ReadBoolean("Motion", "InverseZ", false) == false ? 1 : -1 ;
+	float GyroSens = 35 - IniFile.ReadInteger("Motion", "GyroSens", 100) / 100 * 33;
+	float AccelSens = 160 - IniFile.ReadInteger("Motion", "AccelSens", 100) / 100 * 140;
+	int InverseXStatus = IniFile.ReadBoolean("Motion", "InverseX", false) == false ? 1 : -1;
+	int InverseYStatus = IniFile.ReadBoolean("Motion", "InverseY", false) == false ? 1 : -1;
+	int InverseZStatus = IniFile.ReadBoolean("Motion", "InverseZ", false) == false ? 1 : -1;
 	MotionOrientation = IniFile.ReadBoolean("Motion", "Orientation", true);
 
 	SleepTimeOutMotion = IniFile.ReadInteger("Motion", "SleepTimeOut", 1);
 
-	#define OCR_NORMAL 32512
+#define OCR_NORMAL 32512
 	HCURSOR CurCursor = CopyCursor(LoadCursor(0, IDC_ARROW));
 	HCURSOR CursorEmpty = LoadCursorFromFile("EmptyCursor.cur");
 	CursorHidden = IniFile.ReadBoolean("KeyboardMouse", "HideCursorAfterStart", false);
@@ -488,15 +503,20 @@ int main(int argc, char **argv)
 	float LeftTriggerValue = 0;
 	float RightTriggerValue = 0;
 	float StepTriggerValue = IniFile.ReadFloat("KeyboardMouse", "AnalogTriggerStep", 15);
-	mouseSensetiveX = IniFile.ReadFloat("KeyboardMouse", "SensX", 15);
-	mouseSensetiveY = IniFile.ReadFloat("KeyboardMouse", "SensY", 15);
 
-	// --- NOVAS CONFIGURAÇÕES XIM STYLE ---
-	// Adicione estas chaves no seu Config.ini na seção [KeyboardMouse]
-	float mouseSmoothing = IniFile.ReadFloat("KeyboardMouse", "MouseSmoothing", 0.4f); // 0.1 a 1.0 (Menor = mais suave)
-	float mouseExponent = IniFile.ReadFloat("KeyboardMouse", "MouseExponent", 1.25f); // Curva exponencial (1.2 a 1.5)
-	int mouseBoost = IniFile.ReadInteger("KeyboardMouse", "MouseBoost", 15);          // Boost de zona morta
-	// -------------------------------------
+	// --- CARREGAR CONFIGURAÇÕES HIP (PADRÃO) ---
+	HipSettings.SensX = IniFile.ReadFloat("Hip", "SensX", 15.0f);
+	HipSettings.SensY = IniFile.ReadFloat("Hip", "SensY", 15.0f);
+	HipSettings.Smoothing = IniFile.ReadFloat("Hip", "Smoothing", 0.1f);
+	HipSettings.Curve = IniFile.ReadFloat("Hip", "Curve", 1.0f);
+	HipSettings.Boost = IniFile.ReadInteger("Hip", "Boost", 0);
+
+	// --- CARREGAR CONFIGURAÇÕES ADS (MIRA) ---
+	AdsSettings.SensX = IniFile.ReadFloat("ADS", "SensX", 10.0f);
+	AdsSettings.SensY = IniFile.ReadFloat("ADS", "SensY", 10.0f);
+	AdsSettings.Smoothing = IniFile.ReadFloat("ADS", "Smoothing", 0.4f);
+	AdsSettings.Curve = IniFile.ReadFloat("ADS", "Curve", 1.0f);
+	AdsSettings.Boost = IniFile.ReadInteger("ADS", "Boost", 0);
 
 	SwapSticks = IniFile.ReadBoolean("KeyboardMouse", "SwapSticks", false);
 	LeftAnalogStick = IniFile.ReadBoolean("KeyboardMouse", "EmulateLeftAnalogStick", false);
@@ -517,7 +537,7 @@ int main(int argc, char **argv)
 			if (strcmp(ffd.cFileName, "Default.ini")) {
 				KMProfiles.push_back(ffd.cFileName);
 				ProfileCount++;
-				if(strcmp(ffd.cFileName, DefaultProfile.c_str()) == 0)
+				if (strcmp(ffd.cFileName, DefaultProfile.c_str()) == 0)
 					ProfileIndex = ProfileCount;
 			}
 		} while (FindNextFile(hFind, &ffd) != 0);
@@ -574,7 +594,7 @@ int main(int argc, char **argv)
 	Touch2.LeftMode = 2;
 	static uint8_t TouchPacket = 0;
 
-	while ( !(IsKeyPressed(VK_LMENU) && IsKeyPressed(VK_ESCAPE) ) )
+	while (!(IsKeyPressed(VK_LMENU) && IsKeyPressed(VK_ESCAPE)))
 	{
 		DS4_REPORT_INIT_EX(&report);
 
@@ -723,7 +743,8 @@ int main(int argc, char **argv)
 						report.wButtons |= DS4_BUTTON_SHARE;
 					if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_BACK)
 						report.bSpecial |= DS4_SPECIAL_BUTTON_TOUCHPAD;
-				} else {
+				}
+				else {
 					if (IsKeyPressed(KEY_ID_SHARE))
 						report.bSpecial |= DS4_SPECIAL_BUTTON_TOUCHPAD;
 					if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_BACK)
@@ -790,10 +811,10 @@ int main(int argc, char **argv)
 				}
 
 				if (report.bSpecial & DS4_SPECIAL_BUTTON_TOUCHPAD) {
-						if (!TouchPadPressedWhenSwiping && (report.bThumbRX != 127 || report.bThumbRY != 129)) {
-							report.bSpecial &= ~DS4_SPECIAL_BUTTON_TOUCHPAD;
-							if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) { report.wButtons &= ~DS4_BUTTON_THUMB_RIGHT; report.bSpecial |= DS4_SPECIAL_BUTTON_TOUCHPAD; }
-						}
+					if (!TouchPadPressedWhenSwiping && (report.bThumbRX != 127 || report.bThumbRY != 129)) {
+						report.bSpecial &= ~DS4_SPECIAL_BUTTON_TOUCHPAD;
+						if (myPState.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) { report.wButtons &= ~DS4_BUTTON_THUMB_RIGHT; report.bSpecial |= DS4_SPECIAL_BUTTON_TOUCHPAD; }
+					}
 					Touch1.X = 960; Touch1.Y = 471;
 
 					double LeftStickValue = StickDeviationPercent(report.bThumbLX, report.bThumbLY);
@@ -897,42 +918,47 @@ int main(int argc, char **argv)
 			}
 
 			if (ActivateInAnyWindow || PSNowFound || PSRemotePlayFound) {
-				if (IsKeyPressed(VK_MENU) && IsKeyPressed(KEY_ID_STOP_CENTERING) && SkipPollCount == 0) { CenteringEnable = !CenteringEnable;  SkipPollCount = SkipPollTimeOut;}
+				if (IsKeyPressed(VK_MENU) && IsKeyPressed(KEY_ID_STOP_CENTERING) && SkipPollCount == 0) { CenteringEnable = !CenteringEnable;  SkipPollCount = SkipPollTimeOut; }
 				if (CenteringEnable) GetMouseState();
 
-				// ----------- INÍCIO DA LÓGICA XIM MATRIX -----------
+				// ----------- INÍCIO DA LÓGICA XIM MATRIX (CORRIGIDA) -----------
 
-				// 1. Aplicar Inversão ANTES de processar
+				// 1. Detectar se é HIP ou ADS (Botão Direito)
+				AimSettings* currentAim = (IsKeyPressed(VK_RBUTTON)) ? &AdsSettings : &HipSettings;
+
+				// 2. Aplicar Inversão ANTES de processar
 				double rawDeltaX = (double)DeltaMouseX;
 				double rawDeltaY = (double)DeltaMouseY;
 
 				if (InvertX) rawDeltaX *= -1;
 				if (InvertY) rawDeltaY *= -1;
 
-				// 2. Input Base
-				double targetX = rawDeltaX * mouseSensetiveX;
-				double targetY = rawDeltaY * mouseSensetiveY;
+				// 3. Input Base (Sensibilidade do perfil atual)
+				double targetX = rawDeltaX * currentAim->SensX;
+				double targetY = rawDeltaY * currentAim->SensY;
 
-				// 3. Suavização (Smoothing)
-				g_SmoothX = (g_SmoothX * (1.0 - mouseSmoothing)) + (targetX * mouseSmoothing);
-				g_SmoothY = (g_SmoothY * (1.0 - mouseSmoothing)) + (targetY * mouseSmoothing);
+				// 4. Suavização (Smoothing do perfil atual)
+				// Interpolação Linear simples (Lerp) para filtrar jitter
+				g_SmoothX = (g_SmoothX * (1.0 - currentAim->Smoothing)) + (targetX * currentAim->Smoothing);
+				g_SmoothY = (g_SmoothY * (1.0 - currentAim->Smoothing)) + (targetY * currentAim->Smoothing);
 
-				// 4. Curva Balística (Exponencial)
-				double magX = pow(abs(g_SmoothX), mouseExponent);
-				double magY = pow(abs(g_SmoothY), mouseExponent);
+				// 5. Curva Balística (Exponencial do perfil atual)
+				double magX = pow(abs(g_SmoothX), currentAim->Curve);
+				double magY = pow(abs(g_SmoothY), currentAim->Curve);
 
-				// Preservar sinal e aplicar Boost
+				// 6. Aplicar Boost (Anti-Deadzone do perfil atual)
+				// Preservar sinal e aplicar Boost a partir do centro (128)
 				int outX = 128;
 				int outY = 128;
 
 				if (magX > 0.1) {
-					if (g_SmoothX > 0) outX = 128 + mouseBoost + (int)magX;
-					else               outX = 128 - mouseBoost - (int)magX;
+					if (g_SmoothX > 0) outX = 128 + currentAim->Boost + (int)magX;
+					else               outX = 128 - currentAim->Boost - (int)magX;
 				}
 
 				if (magY > 0.1) {
-					if (g_SmoothY > 0) outY = 128 + mouseBoost + (int)magY;
-					else               outY = 128 - mouseBoost - (int)magY;
+					if (g_SmoothY > 0) outY = 128 + currentAim->Boost + (int)magY;
+					else               outY = 128 - currentAim->Boost - (int)magY;
 				}
 
 				// Clamp final para BYTE (0-255)
@@ -946,12 +972,15 @@ int main(int argc, char **argv)
 					if (IsKeyPressed(KEY_ID_LEFT_STICK_DOWN)) report.bThumbLY = 255;
 					if (IsKeyPressed(KEY_ID_LEFT_STICK_LEFT)) report.bThumbLX = 0;
 					if (IsKeyPressed(KEY_ID_LEFT_STICK_RIGHT)) report.bThumbLX = 255;
-				} else {
+				}
+				else {
 					if (IsKeyPressed(KEY_ID_LEFT_STICK_UP)) {
 						if (LeftAnalogY > 0) LeftAnalogY -= AnalogStickLeft;
-					} else if (IsKeyPressed(KEY_ID_LEFT_STICK_DOWN)) {
+					}
+					else if (IsKeyPressed(KEY_ID_LEFT_STICK_DOWN)) {
 						if (LeftAnalogY < 255) LeftAnalogY += AnalogStickLeft;
-					} else {
+					}
+					else {
 						if (LeftAnalogY > 128 + AnalogStickLeft) LeftAnalogY -= AnalogStickLeft;
 						else if (LeftAnalogY < 128 - AnalogStickLeft) LeftAnalogY += AnalogStickLeft;
 						else LeftAnalogY = 128;
@@ -999,7 +1028,7 @@ int main(int argc, char **argv)
 							LeftTriggerValue -= StepTriggerValue;
 					}
 
-					report.bTriggerL = trunc( Clamp(LeftTriggerValue, 0, 255) );
+					report.bTriggerL = trunc(Clamp(LeftTriggerValue, 0, 255));
 
 					if (IsKeyPressed(KEY_ID_RIGHT_TRIGGER)) {
 						if (RightTriggerValue < 255)
@@ -1010,7 +1039,7 @@ int main(int argc, char **argv)
 							RightTriggerValue -= StepTriggerValue;
 					}
 
-					report.bTriggerR = trunc( Clamp(RightTriggerValue, 0, 255) );
+					report.bTriggerR = trunc(Clamp(RightTriggerValue, 0, 255));
 				}
 
 				if (report.bTriggerL > 0)
@@ -1159,34 +1188,35 @@ int main(int argc, char **argv)
 			if (MotionShakingSwap) {
 				report.wAccelX = -6530;		report.wAccelY = 6950;		report.wAccelZ = -710;
 				report.wGyroX = 2300;		report.wGyroY = 5000;		report.wGyroZ = 10;
-			} else {
+			}
+			else {
 				report.wAccelX = 6830;		report.wAccelY = 7910;		report.wAccelZ = 1360;
 				report.wGyroX = 2700;		report.wGyroY = -5000;		report.wGyroZ = 140;
 			}
 		}
 		else if (MotionXAdd) {
-			report.wAccelX = 32767; report.wAccelY = 0;      report.wAccelZ = 0;
-			report.wGyroX = 32767; report.wGyroY = 0;      report.wGyroZ = 0;
+			report.wAccelX = 32767; report.wAccelY = 0;       report.wAccelZ = 0;
+			report.wGyroX = 32767; report.wGyroY = 0;       report.wGyroZ = 0;
 		}
 		else if (MotionXSub) {
-			report.wAccelX = -32767; report.wAccelY = 0;     report.wAccelZ = 0;
-			report.wGyroX = -32767; report.wGyroY = 0;     report.wGyroZ = 0;
+			report.wAccelX = -32767; report.wAccelY = 0;      report.wAccelZ = 0;
+			report.wGyroX = -32767; report.wGyroY = 0;      report.wGyroZ = 0;
 		}
 		else if (MotionYAdd) {
-			report.wAccelX = 0;      report.wAccelY = 32767; report.wAccelZ = 0;
-			report.wGyroX = 0;      report.wGyroY = 32767; report.wGyroZ = 0;
+			report.wAccelX = 0;       report.wAccelY = 32767; report.wAccelZ = 0;
+			report.wGyroX = 0;       report.wGyroY = 32767; report.wGyroZ = 0;
 		}
 		else if (MotionYSub) {
-			report.wAccelX = 0;      report.wAccelY = -32767; report.wAccelZ = 0;
-			report.wGyroX = 0;      report.wGyroY = -32767; report.wGyroZ = 0;
+			report.wAccelX = 0;       report.wAccelY = -32767; report.wAccelZ = 0;
+			report.wGyroX = 0;       report.wGyroY = -32767; report.wGyroZ = 0;
 		}
 		else if (MotionZAdd) {
-			report.wAccelX = 0;      report.wAccelY = 0;      report.wAccelZ = 32767;
-			report.wGyroX = 0;      report.wGyroY = 0;      report.wGyroZ = 32767;
+			report.wAccelX = 0;       report.wAccelY = 0;       report.wAccelZ = 32767;
+			report.wGyroX = 0;       report.wGyroY = 0;       report.wGyroZ = 32767;
 		}
 		else if (MotionZSub) {
-			report.wAccelX = 0;      report.wAccelY = 0;      report.wAccelZ = -32767;
-			report.wGyroX = 0;      report.wGyroY = 0;      report.wGyroZ = -32767;
+			report.wAccelX = 0;       report.wAccelY = 0;       report.wAccelZ = -32767;
+			report.wGyroX = 0;       report.wGyroY = 0;       report.wGyroZ = -32767;
 		}
 
 		if (IsKeyPressed(KEY_ID_PS))
