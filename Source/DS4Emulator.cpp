@@ -1,7 +1,7 @@
 #include <Windows.h>
 #include <mutex>
-#include <cmath>
-#include <algorithm>
+#include <cmath> // Necessário para pow() e abs()
+#include <algorithm> // Necessário para clamp
 #include <string>
 #include <chrono> // Novo: Para controlar o tempo do Rapid Fire
 #include "ViGEm\Client.h"
@@ -48,9 +48,11 @@ int DeltaMouseX, DeltaMouseY;
 HWND PSPlusWindow = 0;
 HWND PSRemotePlayWindow = 0;
 
-// Variáveis Globais
+// --- VARIÁVEIS GLOBAIS ---
 std::string WindowTitle = "PlayStation Plus";
 std::string WindowTitle2 = "PS4 Remote Play";
+bool CursorHidden = false; // Corrigido: Variável global
+// -------------------------
 
 // Variáveis de Estado (Smoothing e Macros)
 static double g_SmoothX = 0;
@@ -153,7 +155,7 @@ SHORT DeadZoneXboxAxis(SHORT StickAxis, float Percent)
 
 void LoadKMProfile(std::string ProfileFile) {
 	CIniReader IniFile("Profiles\\" + ProfileFile);
-	// Carrega todas as teclas do arquivo .ini (código omitido para brevidade, mas mantido a lógica original)
+	// Carrega todas as teclas do arquivo .ini
 	KEY_ID_LEFT_STICK_UP = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT-STICK-UP", "W"));
 	KEY_ID_LEFT_STICK_LEFT = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT-STICK-LEFT", "A"));
 	KEY_ID_LEFT_STICK_RIGHT = KeyNameToKeyCode(IniFile.ReadString("Keys", "LEFT-STICK-RIGHT", "D"));
@@ -177,7 +179,7 @@ void LoadKMProfile(std::string ProfileFile) {
 	KEY_ID_OPTIONS = KeyNameToKeyCode(IniFile.ReadString("Keys", "OPTIONS", "TAB"));
 	KEY_ID_PS = KeyNameToKeyCode(IniFile.ReadString("Keys", "PS", "F2"));
 	
-	// Touchpad & Motion keys... (Mantidos do original)
+	// Touchpad & Motion keys
 	KEY_ID_TOUCHPAD_SWIPE_UP = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-UP", "7"));
 	KEY_ID_TOUCHPAD_SWIPE_DOWN = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-DOWN", "8"));
 	KEY_ID_TOUCHPAD_SWIPE_LEFT = KeyNameToKeyCode(IniFile.ReadString("Keys", "TOUCHPAD-SWIPE-LEFT", "9"));
@@ -252,8 +254,13 @@ int main(int argc, char **argv)
 	int AnalogStickLeft = IniFile.ReadFloat("KeyboardMouse", "AnalogStickStep", 15);
 	int LeftAnalogX = 128, LeftAnalogY = 128;
 	
-	// Motion Init (Simplificado para o exemplo)
-	// ... (Código do Motion mantido igual ao anterior, mas omitido aqui para focar nas novidades)
+	// --- CORRIGIDO: DEFINIÇÃO DE CURSOR ---
+	#define OCR_NORMAL 32512
+	HCURSOR CurCursor = CopyCursor(LoadCursor(0, IDC_ARROW));
+	HCURSOR CursorEmpty = LoadCursorFromFile("EmptyCursor.cur");
+	CursorHidden = IniFile.ReadBoolean("KeyboardMouse", "HideCursorAfterStart", false);
+	if (CursorHidden) { SetSystemCursor(CursorEmpty, OCR_NORMAL); CursorHidden = true; }
+	// -------------------------------------
 
 	LoadKMProfile(DefaultProfile);
 
