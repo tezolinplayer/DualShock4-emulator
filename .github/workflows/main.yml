@@ -20,7 +20,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente (Isso garante que o código compile sem erro de types)
+    # 1. Cria os Headers (.h) manualmente
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -86,61 +86,34 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Baixa a LIB procurando em MÚLTIPLAS versões (Loop Inteligente)
-    - name: Download ViGEm Lib (Smart Loop)
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # 2. Baixa a LIB de um LINK FIXO e SEGURO (Sem API do GitHub)
+    - name: Download ViGEm Lib (Direct Link)
       shell: powershell
       run: |
         $destDir = "Source\ViGEm\lib\x64"
         New-Item -ItemType Directory -Force -Path $destDir
         
-        $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases"
-        $headers = @{ Authorization = "token $env:GITHUB_TOKEN" }
+        # Link direto para o SDK v1.17.333 (que funciona com VS2019/2022)
+        # Usando um mirror confiável ou o link direto do release específico que sabemos que existe
+        $directLink = "https://github.com/nefarius/ViGEmClient/releases/download/v1.17.333/ViGEmClient_1.17.333.0_x64_VS2019.zip"
         
-        Write-Host "Buscando lista de releases..."
+        Write-Host "Baixando SDK de link fixo..."
         try {
-            $releases = Invoke-RestMethod -Uri $apiUrl -Headers $headers
+            Invoke-WebRequest -Uri $directLink -OutFile "vigem_sdk.zip"
             
-            $found = $false
+            Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp" -Force
             
-            # Loop pelas primeiras 15 releases
-            foreach ($rel in $releases | Select-Object -First 15) {
-                Write-Host "Verificando versão: $($rel.tag_name)"
-                
-                # Procura um asset ZIP que contenha 'x64' e 'VS2019'
-                $asset = $rel.assets | Where-Object { $_.name -like "*x64*VS2019*.zip" } | Select-Object -First 1
-                
-                if ($asset) {
-                    Write-Host ">>> Asset ENCONTRADO: $($asset.name)"
-                    Write-Host "Baixando de: $($asset.browser_download_url)"
-                    
-                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "vigem_sdk.zip"
-                    
-                    # Tenta extrair
-                    if (Test-Path "vigem_temp") { Remove-Item "vigem_temp" -Recurse -Force }
-                    Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp" -Force
-                    
-                    # Procura o arquivo .lib
-                    $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
-                    
-                    if ($libFile) {
-                        Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
-                        Write-Host "SUCESSO: Lib instalada em $destDir\ViGEmClient.lib"
-                        $found = $true
-                        break # Sai do loop
-                    } else {
-                        Write-Warning "ZIP baixado não continha o arquivo .lib. Tentando próxima versão..."
-                    }
-                }
+            # Procura o .lib recursivamente
+            $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
+            
+            if ($libFile) {
+                Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
+                Write-Host "SUCESSO: Lib instalada em $destDir\ViGEmClient.lib"
+            } else {
+                throw "Arquivo .lib não encontrado no ZIP baixado."
             }
-            
-            if (-not $found) {
-                throw "Nenhuma release válida com ViGEmClient.lib foi encontrada após verificar 15 versões."
-            }
-            
         } catch {
-            Write-Error "Erro fatal no processo de download: $_"
+            Write-Error "Erro no download: $_"
             exit 1
         }
 
