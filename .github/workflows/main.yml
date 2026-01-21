@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: read # Necessário para o GITHUB_TOKEN funcionar
 
     steps:
     - name: Checkout repo
@@ -18,7 +20,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente (Isso garante que o código compile sem erro de types)
+    # 1. Cria os Headers (.h) manualmente
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -84,40 +86,46 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. CORREÇÃO: Baixa a LIB usando a API do GitHub (mais seguro que hardcode)
-    - name: Download ViGEm Lib (GitHub API)
+    # 2. Baixa a LIB usando API Autenticada (Resolve o Rate Limit)
+    - name: Download ViGEm Lib (Authenticated)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: powershell
       run: |
         $destDir = "Source\ViGEm\lib\x64"
         New-Item -ItemType Directory -Force -Path $destDir
         
-        # URL da API para a versão estável v1.17.333 (conhecida por funcionar)
         $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases/tags/v1.17.333"
         
-        Write-Host "Consultando API do GitHub para obter link de download..."
+        # --- AQUI ESTÁ A CORREÇÃO ---
+        # Adiciona o cabeçalho de autorização para evitar o erro 403 Rate Limit
+        $headers = @{ Authorization = "token $env:GITHUB_TOKEN" }
+        
+        Write-Host "Consultando API (Autenticado)..."
         try {
-            $release = Invoke-RestMethod -Uri $apiUrl
-            # Procura o arquivo ZIP que contenha 'x64' e 'VS2019' no nome
+            $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
+            
+            # Procura o asset que tem x64 e VS2019 no nome
             $asset = $release.assets | Where-Object { $_.name -like "*x64*VS2019.zip" } | Select-Object -First 1
             
-            if (!$asset) { throw "Asset x64 não encontrado na release." }
+            if (!$asset) { throw "Asset x64 não encontrado na release v1.17.333." }
             
-            Write-Host "Baixando de: $($asset.browser_download_url)"
+            # O link de download do browser não precisa de auth, mas a API sim
+            Write-Host "Baixando: $($asset.browser_download_url)"
             Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "vigem_sdk.zip"
             
             Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp"
             
-            # Procura o arquivo .lib recursivamente (não importa em qual subpasta ele esteja)
             $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
             
             if ($libFile) {
                 Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
-                Write-Host "SUCESSO: Lib copiada para $destDir\ViGEmClient.lib"
+                Write-Host "SUCESSO: Lib instalada."
             } else {
-                throw "Arquivo ViGEmClient.lib não encontrado dentro do zip baixado."
+                throw "Arquivo .lib não encontrado no zip."
             }
         } catch {
-            Write-Error "Erro no processo de download da lib: $_"
+            Write-Error "Erro: $_"
             exit 1
         }
 
