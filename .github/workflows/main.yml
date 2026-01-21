@@ -18,7 +18,7 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 1. Cria os Headers (.h) manualmente (Isso garante compatibilidade do código)
+    # 1. Cria os Headers (.h) manualmente (Isso garante que o código compile sem erro de types)
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -84,23 +84,40 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. CORREÇÃO: Usa o comando oficial 'nuget' para baixar a biblioteca
-    - name: Install ViGEm Lib (NuGet CLI)
+    # 2. CORREÇÃO: Baixa a LIB usando a API do GitHub (mais seguro que hardcode)
+    - name: Download ViGEm Lib (GitHub API)
       shell: powershell
       run: |
-        New-Item -ItemType Directory -Force -Path Source\ViGEm\lib\x64
+        $destDir = "Source\ViGEm\lib\x64"
+        New-Item -ItemType Directory -Force -Path $destDir
         
-        # Baixa o pacote oficial usando o cliente NuGet (mais seguro que link direto)
-        nuget install ViGEmClient -Version 1.21.222 -OutputDirectory packages
+        # URL da API para a versão estável v1.17.333 (conhecida por funcionar)
+        $apiUrl = "https://api.github.com/repos/nefarius/ViGEmClient/releases/tags/v1.17.333"
         
-        # Encontra o arquivo .lib (versão x64) dentro da pasta baixada
-        $libPath = Get-ChildItem -Path "packages" -Recurse -Filter "ViGEmClient.lib" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
-        
-        if ($libPath) {
-            Copy-Item -Path $libPath.FullName -Destination "Source\ViGEm\lib\x64\ViGEmClient.lib"
-            Write-Host "Sucesso! Lib copiada de: $($libPath.FullName)"
-        } else {
-            Write-Error "ERRO CRÍTICO: Não foi possível encontrar ViGEmClient.lib x64 no pacote baixado."
+        Write-Host "Consultando API do GitHub para obter link de download..."
+        try {
+            $release = Invoke-RestMethod -Uri $apiUrl
+            # Procura o arquivo ZIP que contenha 'x64' e 'VS2019' no nome
+            $asset = $release.assets | Where-Object { $_.name -like "*x64*VS2019.zip" } | Select-Object -First 1
+            
+            if (!$asset) { throw "Asset x64 não encontrado na release." }
+            
+            Write-Host "Baixando de: $($asset.browser_download_url)"
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "vigem_sdk.zip"
+            
+            Expand-Archive -Path "vigem_sdk.zip" -DestinationPath "vigem_temp"
+            
+            # Procura o arquivo .lib recursivamente (não importa em qual subpasta ele esteja)
+            $libFile = Get-ChildItem -Path "vigem_temp" -Recurse -Filter "ViGEmClient.lib" | Select-Object -First 1
+            
+            if ($libFile) {
+                Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
+                Write-Host "SUCESSO: Lib copiada para $destDir\ViGEmClient.lib"
+            } else {
+                throw "Arquivo ViGEmClient.lib não encontrado dentro do zip baixado."
+            }
+        } catch {
+            Write-Error "Erro no processo de download da lib: $_"
             exit 1
         }
 
