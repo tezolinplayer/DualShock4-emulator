@@ -1,9 +1,7 @@
-name: Build DS4Emulator (Windows)
+name: Build Windows
 
 on:
   push:
-    branches: [ "master", "main" ]
-  pull_request:
     branches: [ "master", "main" ]
   workflow_dispatch:
 
@@ -12,46 +10,29 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    # 1. Baixa o código do seu repositório
-    - name: Checkout code
+    - name: Checkout repo
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 2. Configura o MSBuild
-    - name: Add MSBuild to PATH
+    - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # 3. CORREÇÃO: Baixa os arquivos do ViGEmClient que estão faltando
-    - name: Fix missing dependencies (ViGEm)
+    - name: Download ViGEm headers
       shell: powershell
       run: |
-        # Cria a pasta se não existir
         New-Item -ItemType Directory -Force -Path Source\ViGEm
-        
-        # Baixa os arquivos de cabeçalho (.h) necessários diretamente do repositório oficial
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nefarius/ViGEmClient/master/include/ViGEm/Client.h" -OutFile "Source\ViGEm\Client.h"
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nefarius/ViGEmClient/master/include/ViGEm/Common.h" -OutFile "Source\ViGEm\Common.h"
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nefarius/ViGEmClient/master/include/ViGEm/Util.h" -OutFile "Source\ViGEm\Util.h"
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/nefarius/ViGEmClient/master/include/ViGEm/ViGEmClient.h" -OutFile "Source\ViGEm\ViGEmClient.h"
-        
-        # Lista para conferir se baixou
-        Write-Host "Conteúdo da pasta ViGEm:"
-        Get-ChildItem Source\ViGEm
+        $url = "https://raw.githubusercontent.com/nefarius/ViGEmClient/master/include/ViGEm"
+        Invoke-WebRequest "$url/Client.h" -OutFile "Source\ViGEm\Client.h"
+        Invoke-WebRequest "$url/Common.h" -OutFile "Source\ViGEm\Common.h"
+        Invoke-WebRequest "$url/Util.h" -OutFile "Source\ViGEm\Util.h"
+        Invoke-WebRequest "$url/ViGEmClient.h" -OutFile "Source\ViGEm\ViGEmClient.h"
 
-    # 4. Compila o projeto
-    # Mantivemos a correção do SDK (10.0)
     - name: Build Solution
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
 
-    # 5. Lista arquivos gerados (Debug)
-    - name: List Build Directory
-      run: |
-        if (Test-Path Source\x64\Release) { dir Source\x64\Release } else { Write-Host "Pasta Release não encontrada" }
-
-    # 6. Faz o upload do .exe
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: DS4Emulator-XIM-Version
+        name: DS4Emulator-XIM
         path: Source/x64/Release/*.exe
