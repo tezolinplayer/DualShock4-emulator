@@ -21,7 +21,7 @@ jobs:
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v1.0.5
 
-    # 1. Cria os Headers (.h) manualmente
+    # 1. Cria os Headers (.h) manualmente (Isso está funcionando bem)
     - name: Create ViGEm Headers
       shell: powershell
       run: |
@@ -85,46 +85,42 @@ jobs:
         Set-Content -Path "Source\ViGEm\Client.h" -Value $clientContent
         Set-Content -Path "Source\ViGEm\Util.h" -Value "#pragma once"
 
-    # 2. Compila a LIB usando a SOLUÇÃO (.sln) - CORREÇÃO DO ERRO MSB8013
-    - name: Build ViGEmClient Lib
+    # 2. Compila a LIB do ViGEm e Caça o Arquivo Gerado
+    - name: Build and Locate ViGEmClient Lib
       shell: powershell
       run: |
         git clone https://github.com/nefarius/ViGEmClient.git vigem_src
+        
+        # Restaura NuGet para a SOLUÇÃO inteira
         nuget restore vigem_src/ViGEmClient.sln
         
-        # Compila a SOLUÇÃO inteira (Resolve o problema de configuração inválida)
-        msbuild vigem_src/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+        Write-Host "Compilando ViGEmClient..."
+        # Compila a SOLUÇÃO (evita erro MSB8013) ignorando erros de warning
+        # O PlatformTarget=x64 é importante aqui
+        msbuild vigem_src/ViGEmClient.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:TreatWarningsAsErrors=false
         
-        # Cria pasta "Libs" na raiz
-        $libsDir = "${{ github.workspace }}\Libs"
-        New-Item -ItemType Directory -Force -Path $libsDir
+        # Prepara a pasta de destino que o emulador exige
+        $destDir = "Source\ViGEm\lib\x64"
+        New-Item -ItemType Directory -Force -Path $destDir
         
-        # Procura o arquivo gerado (pode estar em bin/x64/Release/...)
-        Write-Host "Procurando ViGEmClient.lib..."
+        Write-Host "Procurando ViGEmClient.lib em toda a pasta vigem_src..."
+        
+        # Procura recursivamente pelo arquivo .lib (Isso resolve o problema de 'onde ele salvou?')
         $libFile = Get-ChildItem -Path "vigem_src" -Recurse -Filter "ViGEmClient.lib" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
         
         if ($libFile) {
-            Write-Host "SUCESSO: Encontrado em $($libFile.FullName)"
-            Copy-Item -Path $libFile.FullName -Destination "$libsDir\ViGEmClient.lib"
+            Write-Host "LIB ENCONTRADA: $($libFile.FullName)"
+            Copy-Item -Path $libFile.FullName -Destination "$destDir\ViGEmClient.lib"
+            Write-Host "SUCESSO: Lib copiada para $destDir\ViGEmClient.lib"
         } else {
-            Write-Error "FALHA CRÍTICA: ViGEmClient.lib não encontrada após a compilação."
+            Write-Error "FALHA CRÍTICA: O arquivo ViGEmClient.lib não foi encontrado após a compilação."
+            
+            # Debug: Lista arquivos gerados para entendermos o que aconteceu
+            Get-ChildItem -Path "vigem_src" -Recurse -Filter "*.lib"
             exit 1
         }
 
-    # 3. Cria Props para injetar a dependência (Resolve o erro LNK2001)
-    - name: Create Global Build Props
-      shell: powershell
-      run: |
-        $propsContent = @"
-        <Project>
-          <PropertyGroup>
-            <LibraryPath>`$(MSBuildThisFileDirectory)Libs;`$(LibraryPath)</LibraryPath>
-          </PropertyGroup>
-        </Project>
-        "@
-        Set-Content -Path "Directory.Build.props" -Value $propsContent
-
-    # 4. Compila o Emulador
+    # 3. Compila o Emulador (Agora a Lib estará no lugar certo)
     - name: Build Solution
       run: msbuild Source/DS4Emulator.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
 
