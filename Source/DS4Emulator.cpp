@@ -24,8 +24,8 @@ struct AimSettings {
 
 struct QuantizationSettings {
 	bool Enabled;
-	float MagStep;   // Passo da velocidade (Ex: 15.0)
-	float AngleStep; // Passo do ângulo em graus (Ex: 10.0)
+	float MagStep;
+	float AngleStep;
 };
 
 AimSettings HipSettings;
@@ -60,7 +60,7 @@ HWND PSRemotePlayWindow = 0;
 // Variáveis Globais
 std::string WindowTitle = "PlayStation Plus";
 std::string WindowTitle2 = "PS4 Remote Play";
-bool CursorHidden = false; // Declaração para evitar erro de Linker se não estiver no header
+// A variável CursorHidden foi removida daqui pois já está no Header (.h)
 
 // Variáveis de Estado
 static double g_SmoothX = 0;
@@ -93,7 +93,6 @@ void MotionReceiver() {
 		memset(&freePieIMU, 0, sizeof(freePieIMU));
 		bytes_read = recvfrom(socketS, (char*)(&freePieIMU), sizeof(freePieIMU), 0, (sockaddr*)&from, &fromlen);
 		if (bytes_read > 0) {
-			// Lógica simplificada de Motion para economizar espaço
 			if (MotionOrientation) {
 				GyroX = bytesToFloat(freePieIMU[18], freePieIMU[19], freePieIMU[20], freePieIMU[21]);
 				GyroY = bytesToFloat(freePieIMU[22], freePieIMU[23], freePieIMU[24], freePieIMU[25]);
@@ -304,7 +303,7 @@ int main(int argc, char **argv)
 			double finalX = 0;
 			double finalY = 0;
 
-			// Cálculo com Boost (Anti-Deadzone)
+			// Cálculo com Boost
 			if (magX > noiseThreshold) {
 				if (g_SmoothX > 0) finalX = currentAim->Boost + magX;
 				else               finalX = -currentAim->Boost - magX;
@@ -314,35 +313,27 @@ int main(int argc, char **argv)
 				else               finalY = -currentAim->Boost - magY;
 			}
 
-			// --- LÓGICA DE QUANTIZAÇÃO (QUANTIZATION) ---
+			// --- LÓGICA DE QUANTIZAÇÃO ---
 			if (Quantize.Enabled && (finalX != 0 || finalY != 0)) {
-				// 1. Converter para Polar (Raio e Ângulo)
 				double radius = sqrt(finalX * finalX + finalY * finalY);
-				double angle = atan2(finalY, finalX); // em radianos
+				double angle = atan2(finalY, finalX);
 
-				// 2. Quantizar Magnitude (Velocidade)
 				if (Quantize.MagStep > 0) {
 					radius = round(radius / Quantize.MagStep) * Quantize.MagStep;
 				}
-
-				// 3. Quantizar Ângulo
 				if (Quantize.AngleStep > 0) {
 					double angleDeg = angle * 180.0 / M_PI;
 					angleDeg = round(angleDeg / Quantize.AngleStep) * Quantize.AngleStep;
 					angle = angleDeg * M_PI / 180.0;
 				}
-
-				// 4. Converter de volta para Cartesiano
 				finalX = radius * cos(angle);
 				finalY = radius * sin(angle);
 			}
-			// --------------------------------------------
+			// -----------------------------
 
-			// Mapear para 0-255 (Centro 128)
 			report.bThumbRX = (BYTE)Clamp((float)(128 + finalX), 0, 255);
 			report.bThumbRY = (BYTE)Clamp((float)(128 + finalY), 0, 255);
 
-			// Gatilhos e Rapid Fire
 			if (isFiring) {
 				if (Extras.RapidFireEnabled) {
 					auto now = std::chrono::steady_clock::now();
